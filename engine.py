@@ -329,8 +329,17 @@ def _build_story(style, styles, title_page, elements):
             story.append(mark_body_start(para))
             at_fresh_page = False
         elif el.type == "scene_heading":
-            para = Paragraph(render_inline(el.text.upper()), styles["scene_heading"])
-            para.apt_scene = el.text.upper()
+            heading_text = el.text.upper()
+            number = el.meta.get("scene_number")
+            display_text = heading_text
+            if number and style.scene_number_position != "hide":
+                formatted = style.scene_number_format.format(n=number)
+                if style.scene_number_position == "before":
+                    display_text = f"{formatted} {heading_text}"
+                else:  # "after"
+                    display_text = f"{heading_text} {formatted}"
+            para = Paragraph(render_inline(display_text), styles["scene_heading"])
+            para.apt_scene = display_text if style.scene_number_in_header_strap else heading_text
             story.append(mark_body_start(para))
             at_fresh_page = False
         elif el.type == "action":

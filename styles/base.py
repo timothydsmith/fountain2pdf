@@ -80,3 +80,9 @@ class Style:
     pagination_font: str
     pagination_size: float
     pagination_format: str = "{n}"  # e.g. "{n}." for a trailing period
+
+    # Forced scene numbers ("INT. HOUSE - DAY #2A#") - where, if anywhere,
+    # to display the number attached to a scene heading.
+    scene_number_position: str = "hide"    # "hide" | "before" | "after"
+    scene_number_format: str = "{n}."      # template applied to the number
+    scene_number_in_header_strap: bool = False  # include it in the running header?

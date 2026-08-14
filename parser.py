@@ -43,6 +43,17 @@ TITLE_PAGE_KEY_RE = re.compile(r"^([A-Za-z][A-Za-z0-9 _\-]*):\s*(.*)$")
 TRANSITION_RE = re.compile(r"^[A-Z0-9 .'\-]+TO:$")
 PAGE_BREAK_RE = re.compile(r"^={3,}$")
 SECTION_RE = re.compile(r"^(#+)\s*(.*)$")
+SCENE_NUMBER_RE = re.compile(r"\s*#([0-9A-Za-z][0-9A-Za-z.\-]*)#\s*$")
+
+
+def split_scene_number(text):
+    """Split a forced scene number (e.g. "INT. HOUSE - DAY #2A#") off the
+    end of a scene heading line, per the Fountain spec. Returns
+    (heading_text, number_or_None)."""
+    m = SCENE_NUMBER_RE.search(text)
+    if not m:
+        return text, None
+    return text[: m.start()].rstrip(), m.group(1)
 
 
 def strip_boneyard_and_notes(text):
@@ -198,12 +209,18 @@ def parse_fountain(text):
             continue
 
         if stripped.startswith(".") and not stripped.startswith(".."):
-            elements.append(Element("scene_heading", stripped[1:].strip()))
+            heading, number = split_scene_number(stripped[1:].strip())
+            elements.append(
+                Element("scene_heading", heading, {"scene_number": number} if number else None)
+            )
             idx += 1
             continue
 
         if SCENE_HEADING_RE.match(stripped):
-            elements.append(Element("scene_heading", stripped))
+            heading, number = split_scene_number(stripped)
+            elements.append(
+                Element("scene_heading", heading, {"scene_number": number} if number else None)
+            )
             idx += 1
             continue
 

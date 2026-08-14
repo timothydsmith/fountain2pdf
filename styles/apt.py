@@ -16,6 +16,9 @@ Australian Plays Transform (APT) play submission style, per
     caps, scene in regular caps, both centered
   - Pagination: centered at the bottom, numbering starts at the first
     page of dialogue (preliminary pages are unnumbered)
+  - Forced scene numbers ("INT. HOUSE - DAY #2A#") are printed at the
+    start of the Scene Heading as "2A." and are left out of the running
+    header strap
 
 Palatino is a commercial font, so it isn't bundled here - this module looks
 for it (or a free equivalent) already installed on the machine running the
@@ -120,4 +123,7 @@ def get_style():
         pagination_font=bold,
         pagination_size=10,
         pagination_format="{n}",
+        scene_number_position="before",
+        scene_number_format="{n}.",
+        scene_number_in_header_strap=False,
     )
