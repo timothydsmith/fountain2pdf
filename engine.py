@@ -233,8 +233,9 @@ class _ScribeDocTemplate(SimpleDocTemplate):
     """SimpleDocTemplate subclass used for a first, throwaway build pass
     that discovers, for each page:
       - the most recent Act/Scene heading text (for the header strap)
-      - the page on which the first body flowable landed (for pagination
-        that starts counting at the first page of dialogue)
+      - the page on which the first scene heading landed (for pagination
+        that starts counting at the first scene, and for the header strap,
+        which shouldn't appear over preliminary/preface pages)
 
     This has to be a separate pass rather than read live during the real
     build: reportlab calls onPage at the *start* of a page, before that
@@ -257,6 +258,22 @@ class _ScribeDocTemplate(SimpleDocTemplate):
             self.scene_events.append((self.page, scene))
         if getattr(flowable, "apt_body_start", False) and self.dialogue_start_page is None:
             self.dialogue_start_page = self.page
+
+
+_ROMAN_NUMERALS = [
+    (1000, "m"), (900, "cm"), (500, "d"), (400, "cd"),
+    (100, "c"), (90, "xc"), (50, "l"), (40, "xl"),
+    (10, "x"), (9, "ix"), (5, "v"), (4, "iv"), (1, "i"),
+]
+
+
+def _to_roman(n):
+    result = []
+    for value, symbol in _ROMAN_NUMERALS:
+        while n >= value:
+            result.append(symbol)
+            n -= value
+    return "".join(result)
 
 
 def _draw_centered_mixed(canvas, y, segments):
@@ -291,20 +308,24 @@ def _build_story(style, styles, title_page, elements):
 
     pending_character = None   # name of the speech currently being built, or None
     pending_lines = []         # [(kind, text), ...] for that speech
-    body_marked = False        # has the first body flowable been tagged yet?
+    scene_marked = False       # has the first Act/Scene heading been tagged yet?
 
-    def mark_body_start(flowable):
-        nonlocal body_marked
-        if not body_marked:
+    def mark_scene_start(flowable):
+        """Tag the first Act/Scene structural heading (a `section` - "#"/"##" -
+        or a `scene_heading` - INT./EXT./forced ".") so pagination and the
+        header strap both start there, leaving any title/preliminary/preface
+        pages before it out of the Arabic page count."""
+        nonlocal scene_marked
+        if not scene_marked:
             flowable.apt_body_start = True
-            body_marked = True
+            scene_marked = True
         return flowable
 
     def flush_char_block():
         nonlocal at_fresh_page, pending_character
         if pending_character is not None:
             block = _character_block_flowable(pending_character, pending_lines, style, styles)
-            story.append(mark_body_start(block))
+            story.append(block)
             story.append(Spacer(1, style.speech_gap))
             pending_character = None
             pending_lines.clear()
@@ -337,7 +358,7 @@ def _build_story(style, styles, title_page, elements):
             para.apt_scene = el.text.upper()
             if depth == 1 and story and not at_fresh_page:
                 story.append(PageBreak())
-            story.append(mark_body_start(para))
+            story.append(mark_scene_start(para))
             at_fresh_page = False
         elif el.type == "scene_heading":
             heading_text = el.text.upper()
@@ -351,26 +372,24 @@ def _build_story(style, styles, title_page, elements):
                     display_text = f"{heading_text} {formatted}"
             para = Paragraph(render_inline(display_text), styles["scene_heading"])
             para.apt_scene = display_text if style.scene_number_in_header_strap else heading_text
-            story.append(mark_body_start(para))
+            story.append(mark_scene_start(para))
             at_fresh_page = False
         elif el.type == "action":
-            story.append(mark_body_start(Paragraph(render_inline(el.text), styles["action"])))
+            story.append(Paragraph(render_inline(el.text), styles["action"]))
             at_fresh_page = False
         elif el.type == "preface":
-            story.append(mark_body_start(Paragraph(render_inline(el.text), styles["preface"])))
+            story.append(Paragraph(render_inline(el.text), styles["preface"]))
             at_fresh_page = False
         elif el.type == "preface_list_item":
             marker = el.meta.get("marker", "•")
             para = Paragraph(render_inline(el.text), styles["preface_list"], bulletText=marker)
-            story.append(mark_body_start(para))
+            story.append(para)
             at_fresh_page = False
         elif el.type == "transition":
-            story.append(
-                mark_body_start(Paragraph(render_inline(el.text.upper()), styles["transition"]))
-            )
+            story.append(Paragraph(render_inline(el.text.upper()), styles["transition"]))
             at_fresh_page = False
         elif el.type == "centered":
-            story.append(mark_body_start(Paragraph(render_inline(el.text), styles["centered"])))
+            story.append(Paragraph(render_inline(el.text), styles["centered"]))
             at_fresh_page = False
         elif el.type == "page_break":
             if not at_fresh_page:
@@ -417,20 +436,28 @@ def build_pdf(style, title_page, elements, output_path):
     def on_page(canvas, doc_):
         canvas.saveState()
 
+        page_num_text = None
         if style.paginate_from_body:
-            show_number = dialogue_start_page is not None and doc_.page >= dialogue_start_page
-            page_num = (doc_.page - dialogue_start_page + 1) if show_number else None
+            if dialogue_start_page is not None and doc_.page >= dialogue_start_page:
+                page_num_text = style.pagination_format.format(
+                    n=doc_.page - dialogue_start_page + 1
+                )
+            elif style.preface_roman_numerals and (doc_.page > 1 or not title_page):
+                preface_start_page = 2 if title_page else 1
+                page_num_text = style.pagination_format.format(
+                    n=_to_roman(doc_.page - preface_start_page + 1)
+                )
         else:
-            show_number = doc_.page > 1 or not title_page
-            page_num = doc_.page
+            if doc_.page > 1 or not title_page:
+                page_num_text = style.pagination_format.format(n=doc_.page)
 
-        if show_number and page_num is not None:
+        if page_num_text is not None:
             canvas.setFont(style.pagination_font, style.pagination_size)
             canvas.setFillColor(Color(0, 0, 0))
             canvas.drawCentredString(
                 style.page_size[0] / 2.0,
                 style.bottom_margin / 2.0,
-                style.pagination_format.format(n=page_num),
+                page_num_text,
             )
 
         if style.header_strap and play_title and dialogue_start_page is not None \

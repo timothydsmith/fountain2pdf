@@ -14,8 +14,10 @@ Australian Plays Transform (APT) play submission style, per
   - Stage directions in italic, 90% tint black, flush left (no extra indent)
   - Running header strap each page: "PLAY TITLE | SCENE", title in bold
     caps, scene in regular caps, both centered
-  - Pagination: centered at the bottom, numbering starts at the first
-    page of dialogue (preliminary pages are unnumbered)
+  - Pagination: centered at the bottom. Arabic numbering starts at the
+    first page of the first scene heading; pages before that (title page
+    excepted, which stays unnumbered) are numbered with lowercase roman
+    numerals
   - Forced scene numbers ("INT. HOUSE - DAY #2A#") are printed at the
     start of the Scene Heading as "2A." and are left out of the running
     header strap
@@ -120,6 +122,7 @@ def get_style():
         scene_size=10,
         header_strap=True,
         paginate_from_body=True,
+        preface_roman_numerals=True,
         pagination_font=bold,
         pagination_size=10,
         pagination_format="{n}",

@@ -75,11 +75,16 @@ class Style:
     header_strap: bool
 
     # Pagination
-    paginate_from_body: bool       # number pages 1.. from first dialogue page,
-                                    # leaving title/preliminary pages unnumbered
+    paginate_from_body: bool       # number pages 1.. from the first scene heading,
+                                    # leaving title/preliminary/preface pages unnumbered
     pagination_font: str
     pagination_size: float
     pagination_format: str = "{n}"  # e.g. "{n}." for a trailing period
+    preface_roman_numerals: bool = False  # number pages before the first scene
+                                    # heading with lowercase roman numerals
+                                    # (only meaningful when paginate_from_body
+                                    # is True; the title page itself stays
+                                    # unnumbered, matching Arabic pagination)
 
     # Forced scene numbers ("INT. HOUSE - DAY #2A#") - where, if anywhere,
     # to display the number attached to a scene heading.
