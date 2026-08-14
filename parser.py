@@ -44,6 +44,8 @@ TRANSITION_RE = re.compile(r"^[A-Z0-9 .'\-]+TO:$")
 PAGE_BREAK_RE = re.compile(r"^={3,}$")
 SECTION_RE = re.compile(r"^(#+)\s*(.*)$")
 SCENE_NUMBER_RE = re.compile(r"\s*#([0-9A-Za-z][0-9A-Za-z.\-]*)#\s*$")
+LIST_BULLET_RE = re.compile(r"^[-*+]\s+(.+)$")
+LIST_ORDERED_RE = re.compile(r"^(\d+)[.)]\s+(.+)$")
 
 
 def split_scene_number(text):
@@ -86,9 +88,16 @@ def escape_xml(text):
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+LINK_RE = re.compile(r"\[([^\[\]]+)\]\((\S+?)\)")
+
+
 def render_inline(text):
-    """Escape XML, then translate Fountain emphasis into reportlab markup."""
+    """Escape XML, then translate Fountain emphasis and markdown links
+    ([text](url)) into reportlab markup."""
     text = escape_xml(text)
+    text = LINK_RE.sub(
+        lambda m: f'<a href="{m.group(2)}" color="blue"><u>{m.group(1)}</u></a>', text
+    )
     # forced line break: line ends with two-or-more trailing spaces in source,
     # already trimmed by caller in most paths, so this mainly covers the
     # dialogue/action join case where we insert explicit breaks.
@@ -115,6 +124,8 @@ def _starts_new_element(line):
     if SCENE_HEADING_RE.match(line):
         return True
     if TRANSITION_RE.match(line) and line == line.upper():
+        return True
+    if LIST_BULLET_RE.match(line) or LIST_ORDERED_RE.match(line):
         return True
     if is_all_caps_name(strip_character_extension(line)):
         return True  # conservatively treat as a potential character cue
@@ -277,6 +288,11 @@ def parse_fountain(text):
     for key, values in extracted.items():
         title_page.setdefault(key, []).extend(values)
 
+    # Anything left before the first act/section or scene heading is a
+    # preface (author's notes, music notes, and the like) rather than
+    # stage direction, and should be rendered as normal body text.
+    preface_end = _front_matter_end(lines, idx)
+
     n = len(lines)
     elements = []
 
@@ -367,6 +383,28 @@ def parse_fountain(text):
             idx += 1
             continue
 
+        if idx < preface_end:
+            m_ordered = LIST_ORDERED_RE.match(stripped)
+            if m_ordered:
+                elements.append(
+                    Element(
+                        "preface_list_item",
+                        m_ordered.group(2).strip(),
+                        {"marker": f"{m_ordered.group(1)}."},
+                    )
+                )
+                idx += 1
+                continue
+
+            m_bullet = LIST_BULLET_RE.match(stripped)
+            if m_bullet:
+                elements.append(
+                    Element("preface_list_item", m_bullet.group(1).strip(), {"marker": "•"})
+                )
+                idx += 1
+                continue
+
+        para_start = idx
         action_lines = [stripped]
         idx += 1
         while (
@@ -376,6 +414,7 @@ def parse_fountain(text):
         ):
             action_lines.append(lines[idx].strip())
             idx += 1
-        elements.append(Element("action", " ".join(action_lines)))
+        el_type = "preface" if para_start < preface_end else "action"
+        elements.append(Element(el_type, " ".join(action_lines)))
 
     return title_page, elements

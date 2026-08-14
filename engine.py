@@ -111,6 +111,17 @@ def _styles(style):
             textColor=Color(*style.action_color),
             spaceBefore=10, spaceAfter=10,
         ),
+        "preface": ParagraphStyle(
+            "preface", fontName=style.font_regular, fontSize=style.body_size,
+            leading=style.leading, alignment=TA_LEFT,
+            spaceBefore=10, spaceAfter=10,
+        ),
+        "preface_list": ParagraphStyle(
+            "preface_list", fontName=style.font_regular, fontSize=style.body_size,
+            leading=style.leading, alignment=TA_LEFT,
+            leftIndent=18, bulletIndent=0,
+            spaceBefore=2, spaceAfter=2,
+        ),
         "transition": ParagraphStyle(
             "transition", fontName=style.font_bold, fontSize=style.body_size,
             leading=style.leading, alignment=TA_CENTER, spaceBefore=10, spaceAfter=10,
@@ -344,6 +355,14 @@ def _build_story(style, styles, title_page, elements):
             at_fresh_page = False
         elif el.type == "action":
             story.append(mark_body_start(Paragraph(render_inline(el.text), styles["action"])))
+            at_fresh_page = False
+        elif el.type == "preface":
+            story.append(mark_body_start(Paragraph(render_inline(el.text), styles["preface"])))
+            at_fresh_page = False
+        elif el.type == "preface_list_item":
+            marker = el.meta.get("marker", "•")
+            para = Paragraph(render_inline(el.text), styles["preface_list"], bulletText=marker)
+            story.append(mark_body_start(para))
             at_fresh_page = False
         elif el.type == "transition":
             story.append(
