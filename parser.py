@@ -121,6 +121,113 @@ def _starts_new_element(line):
     return False
 
 
+MARKDOWN_HEADING_RE = re.compile(r"^(\*{1,3}|_)(.+)\1$")
+
+# Aliases (case-insensitive, markdown emphasis stripped) recognised as
+# preliminary-section headings when they appear as their own line, in
+# markdown emphasis, in the body before the first scene heading - an
+# alternative to supplying the same sections via title-page keys, for
+# writers who prefer to keep breakdowns as visible script text.
+BREAKDOWN_HEADING_ALIASES = {
+    "characters": "characters",
+    "character": "characters",
+    "cast of characters": "characters",
+    "setting": "setting",
+    "time": "time",
+    "setting & time": "setting",
+    "setting and time": "setting",
+    "scene breakdown": "scene breakdown",
+    "scenes": "scene breakdown",
+}
+
+
+def _match_breakdown_heading(line):
+    """If `line` is a standalone markdown-emphasised heading (*Text*,
+    **Text**, ***Text***, or _Text_, with an optional trailing colon) that
+    names one of the known preliminary sections, return its canonical
+    title-page key. Otherwise return None."""
+    line = line.strip()
+    if line.endswith(":"):
+        line = line[:-1].strip()
+    m = MARKDOWN_HEADING_RE.match(line)
+    if not m:
+        return None
+    inner = m.group(2).strip()
+    if inner.endswith(":"):
+        inner = inner[:-1].strip()
+    return BREAKDOWN_HEADING_ALIASES.get(inner.lower())
+
+
+def _front_matter_end(lines, start_idx):
+    """Index of the first line, at or after start_idx, that begins the
+    real body of the script (a section marker or a scene heading).
+    Breakdown headings are only recognised before this point."""
+    for i in range(start_idx, len(lines)):
+        stripped = lines[i].strip()
+        if not stripped:
+            continue
+        if stripped.startswith("#"):
+            return i
+        if stripped.startswith(".") and not stripped.startswith(".."):
+            return i
+        if SCENE_HEADING_RE.match(stripped):
+            return i
+    return len(lines)
+
+
+def _extract_markdown_breakdowns(lines, start_idx):
+    """Pull Characters / Setting & Time / Scene Breakdown sections written
+    as markdown-heading body text (rather than title-page keys) out of the
+    lines between start_idx and the first scene heading, so they render as
+    preliminary pages instead of being parsed as stage direction.
+
+    Returns (extracted: dict[str, list[str]], lines: list[str]) - the
+    returned `lines` list has the consumed lines blanked out in place, so
+    downstream indices are unaffected.
+    """
+    end = _front_matter_end(lines, start_idx)
+    lines = list(lines)
+    extracted = {}
+    active_key = None
+
+    for i in range(start_idx, end):
+        stripped = lines[i].strip()
+        if not stripped:
+            continue
+        if PAGE_BREAK_RE.match(stripped):
+            active_key = None
+            continue
+        heading_key = _match_breakdown_heading(stripped)
+        if heading_key:
+            active_key = heading_key
+            lines[i] = ""
+            continue
+        if active_key:
+            extracted.setdefault(active_key, []).append(stripped)
+            lines[i] = ""
+
+    if extracted:
+        # A page break that no longer has any real content before the next
+        # page break (or the end of the front matter) only existed to
+        # separate a section we just pulled out - drop it too, so it
+        # doesn't render as a blank page.
+        i = start_idx
+        while i < end:
+            if PAGE_BREAK_RE.match(lines[i].strip()):
+                j = i + 1
+                has_content = False
+                while j < end and not PAGE_BREAK_RE.match(lines[j].strip()):
+                    if lines[j].strip():
+                        has_content = True
+                        break
+                    j += 1
+                if not has_content:
+                    lines[i] = ""
+            i += 1
+
+    return extracted, lines
+
+
 def _parse_title_page(lines):
     """Return (title_page_dict, first_body_line_index)."""
     block = []
@@ -165,6 +272,11 @@ def parse_fountain(text):
     lines = text.split("\n")
 
     title_page, idx = _parse_title_page(lines)
+
+    extracted, lines = _extract_markdown_breakdowns(lines, idx)
+    for key, values in extracted.items():
+        title_page.setdefault(key, []).extend(values)
+
     n = len(lines)
     elements = []
 
