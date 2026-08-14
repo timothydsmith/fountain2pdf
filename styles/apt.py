@@ -124,6 +124,6 @@ def get_style():
         pagination_size=10,
         pagination_format="{n}",
         scene_number_position="before",
-        scene_number_format="{n}.",
+        scene_number_format="SCENE {n}:",
         scene_number_in_header_strap=False,
     )
