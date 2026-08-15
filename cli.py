@@ -9,7 +9,8 @@ Usage:
     python cli.py input.fountain --anonymise
 
 Styles: modern (Dramatists Guild Modern Play Format, default), apt
-(Australian Plays Transform submission format).
+(Australian Plays Transform submission format), samuel_french (Samuel
+French / SFI submission format).
 
 This is the "glue" file: it doesn't know how Fountain parsing or PDF
 rendering actually work, it just reads command-line arguments, calls

@@ -15,6 +15,7 @@ To add a new style:
 # load_style() below calls only once someone actually asks for that style.
 from . import apt
 from . import modern
+from . import samuel_french
 
 # The registry: maps the string a user types after --style on the command
 # line to the module that knows how to build that style's config. Adding a
@@ -22,6 +23,7 @@ from . import modern
 STYLES = {
     "apt": apt,
     "modern": modern,
+    "samuel_french": samuel_french,
 }
 
 

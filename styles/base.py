@@ -158,3 +158,24 @@ class Style:
     continued_text: str = "(CONT'D)"       # appended to the repeated
                                             # character name at the top of
                                             # the next page
+
+    action_alignment: str = "left"         # "left" | "center" | "right"
+
+    # Preliminary-page headings ("CHARACTERS", "SCENE BREAKDOWN", ...).
+    prelim_heading_bold: bool = True
+    prelim_heading_underline: bool = False
+
+    # A "Name  Description" / "Name: Description" line in a preliminary
+    # section (e.g. a Characters entry) - whether the name half is
+    # underlined.
+    name_description_name_underline: bool = False
+
+    # In the character_on_own_line layout, a *leading* parenthetical of
+    # one word or less (e.g. "(laughing)") shares the name's line instead
+    # of getting a line of its own - "JOHN (laughing)" rather than "JOHN"
+    # then "(laughing)" underneath. A longer leading parenthetical, or one
+    # appearing later in the speech, is unaffected either way. Only meant
+    # for character_on_own_line styles - the shared-line table layout has
+    # its own, different rule for a leading parenthetical (see
+    # engine._character_block_parts).
+    character_short_parenthetical_inline: bool = False

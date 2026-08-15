@@ -109,7 +109,9 @@ def _styles(style):
             leading=style.leading, alignment=TA_LEFT,
         ),
         "prelim_heading": ParagraphStyle(
-            "prelim_heading", fontName=style.font_bold, fontSize=style.body_size,
+            "prelim_heading",
+            fontName=style.font_bold if style.prelim_heading_bold else style.font_regular,
+            fontSize=style.body_size,
             leading=style.leading, alignment=TA_CENTER, spaceBefore=0, spaceAfter=14,
         ),
         "prelim_body": ParagraphStyle(
@@ -201,7 +203,7 @@ def _styles(style):
         "action": ParagraphStyle(
             "action", fontName=style.font_italic if style.action_italic else style.font_regular,
             fontSize=style.action_size,
-            leading=style.leading, alignment=TA_LEFT,
+            leading=style.leading, alignment=_ALIGN_MAP[style.action_alignment],
             leftIndent=style.action_left_indent, rightIndent=style.action_right_indent,
             # Color(*style.action_color) unpacks the (r, g, b) tuple from
             # the style into Color's three positional arguments - the same
@@ -304,6 +306,12 @@ def _get_first(title_page, keys):
 # "PROFESSOR DE VOS") while still stopping at the first big gap.
 NAME_DESCRIPTION_RE = re.compile(r"^(\S.*?)\s{2,}(\S.*)$")
 
+# The other common way writers format one of these entries: "Name:
+# Description" (a colon, then at least one space) - e.g. "JOHN DOE: 45
+# years old, a university professor." Tried only if the space-gap pattern
+# above doesn't match.
+NAME_DESCRIPTION_COLON_RE = re.compile(r"^(\S.*?):\s+(\S.*)$")
+
 # Extra horizontal gap (points) between the name column and the
 # description column in a preliminary section - the same idea as
 # Style.dialogue_gutter, just not style-configurable since this is a
@@ -312,14 +320,17 @@ _NAME_DESCRIPTION_GUTTER = 12
 
 
 def _split_name_description(line):
-    """If `line` looks like "Name<big gap>Description", return (name,
-    description). Otherwise return None, meaning it should just be
-    rendered as an ordinary paragraph."""
+    """If `line` looks like "Name<big gap>Description" or "Name:
+    Description", return (name, description). Otherwise return None,
+    meaning it should just be rendered as an ordinary paragraph."""
     m = NAME_DESCRIPTION_RE.match(line)
+    if m:
+        return m.group(1), m.group(2)
+    m = NAME_DESCRIPTION_COLON_RE.match(line)
     return (m.group(1), m.group(2)) if m else None
 
 
-def _name_description_row(name, description, name_col_width, available_width, styles):
+def _name_description_row(name, description, name_col_width, available_width, styles, style):
     """One "Name   description" entry as a two-column, borderless table -
     the same technique _character_block_flowable uses for dialogue: a
     fixed-width left column and reportlab-driven wrapping in the right
@@ -328,7 +339,10 @@ def _name_description_row(name, description, name_col_width, available_width, st
     (which reportlab's Paragraph would collapse to one anyway - Paragraph
     text is interpreted a bit like HTML, where runs of whitespace aren't
     significant)."""
-    name_para = Paragraph(render_inline(name), styles["prelim_body"])
+    name_rendered = render_inline(name)
+    if style.name_description_name_underline:
+        name_rendered = f"<u>{name_rendered}</u>"
+    name_para = Paragraph(name_rendered, styles["prelim_body"])
     desc_para = Paragraph(render_inline(description), styles["prelim_body"])
     table = Table(
         [[name_para, desc_para]],
@@ -396,7 +410,8 @@ def _preliminary_flowables(title_page, styles, style):
                 + _NAME_DESCRIPTION_GUTTER
             )
 
-        flow = [Paragraph(heading, styles["prelim_heading"])]
+        heading_text = f"<u>{heading}</u>" if style.prelim_heading_underline else heading
+        flow = [Paragraph(heading_text, styles["prelim_heading"])]
         for line, split in zip(lines, splits):
             if line == "":
                 # A blank-line marker from _extract_markdown_breakdowns -
@@ -407,7 +422,9 @@ def _preliminary_flowables(title_page, styles, style):
             elif split:
                 name, description = split
                 flow.append(
-                    _name_description_row(name, description, name_col_width, available_width, styles)
+                    _name_description_row(
+                        name, description, name_col_width, available_width, styles, style
+                    )
                 )
             else:
                 flow.append(Paragraph(render_inline(line), styles["prelim_body"]))
@@ -517,15 +534,39 @@ def _character_block_parts(name, lines, style, styles):
     return parts
 
 
+def _short_parenthetical_word(text):
+    """The inner text of a one-word (or shorter) parenthetical like
+    "(laughing)" or "(patiently.)", or None if `text` has more than one
+    word in it (once the parentheses themselves are stripped off)."""
+    inner = text.strip()
+    if inner.startswith("(") and inner.endswith(")"):
+        inner = inner[1:-1]
+    return inner if len(inner.split()) <= 1 else None
+
+
 def _character_own_line_parts(name, lines, style, styles):
     """"Modern Play Format" layout: the character name is its own centered
     paragraph, with dialogue and parentheticals as separate full-width
     paragraphs below it - as opposed to APT's table layout, which puts the
     name and the first line of dialogue on the same line. Already a flat
     list of independent parts, one per line - nothing further to split up
-    here, unlike the table layout above."""
-    parts = [Paragraph(render_inline(name), styles["character"])]
-    for kind, text in lines:
+    here, unlike the table layout above - except for one style-specific
+    wrinkle (see character_short_parenthetical_inline below)."""
+    name_rendered = render_inline(name)
+    consumed = 0
+    if style.character_short_parenthetical_inline and lines and lines[0][0] == "parenthetical":
+        word = _short_parenthetical_word(lines[0][1])
+        if word is not None:
+            # A one-word direction right after the cue, e.g. "(laughing)",
+            # reads as part of the same beat as the name itself - "JOHN
+            # (laughing)" on one line - so it's folded into the name's own
+            # paragraph instead of getting a line (and a whole beat) to
+            # itself. A longer parenthetical here still gets its own line
+            # below, same as one appearing later in the speech.
+            name_rendered = f"{name_rendered} ({render_inline(word)})"
+            consumed = 1
+    parts = [Paragraph(name_rendered, styles["character"])]
+    for kind, text in lines[consumed:]:
         rendered = render_inline(text)
         if kind == "parenthetical":
             parts.append(Paragraph(rendered, styles["parenthetical"]))
@@ -558,12 +599,17 @@ class _SpeechFlowable(Flowable):
     real logic instead.
     """
 
-    def __init__(self, name, parts, style, styles):
+    def __init__(self, name, parts, style, styles, min_lead=1):
         Flowable.__init__(self)
         self.name = name
         self.parts = parts
         self.style = style
         self.styles = styles
+        # How many of `parts` must always be kept together as one
+        # unsplittable leading chunk - see split() for why this exists.
+        # Clamped to len(parts) so a very short speech (e.g. just a name,
+        # no dialogue at all) doesn't ask for more parts than it has.
+        self.min_lead = min(min_lead, len(parts)) if parts else 0
 
     def wrap(self, availWidth, availHeight):
         # Each part's *natural* height, i.e. as if it had a whole empty
@@ -594,13 +640,25 @@ class _SpeechFlowable(Flowable):
         # push this flowable onto a fresh page and ask again there
         # (starting a page with the room already used up by page furniture
         # is the normal, expected reason this happens).
+        #
+        # min_lead raises the bar on "that alone" from just the first part
+        # to the first `min_lead` parts together. This matters for the
+        # character_on_own_line layout, where the name and the first line
+        # of dialogue are two *separate* parts (parts[0] and parts[1]):
+        # without this, a page with just enough room left for the bare
+        # name would strand it there with a "(MORE)" cue directly under it
+        # and no actual dialogue - technically a valid split, but not one
+        # anyone would want to read. Requiring the name and its first line
+        # to fit together avoids that, at the cost of possibly leaving a
+        # bit more blank space at the foot of the page.
         budget = availHeight - more_height
-        if not self._heights or self._heights[0] > budget:
+        lead_height = sum(self._heights[: self.min_lead])
+        if not self._heights or lead_height > budget:
             return []
 
-        fitted = []
-        used = 0
-        for part, h in zip(self.parts, self._heights):
+        fitted = list(self.parts[: self.min_lead])
+        used = lead_height
+        for part, h in zip(self.parts[self.min_lead :], self._heights[self.min_lead :]):
             if used + h > budget:
                 break
             fitted.append(part)
@@ -619,9 +677,18 @@ class _SpeechFlowable(Flowable):
             this_page.append(more_para)
 
         next_parts = list(remaining)
+        # The continuation gets its own repeated name (+ "(Cont.)") when
+        # more_continued is on - always as a standalone paragraph, never
+        # part of a table, regardless of which layout built the original
+        # `parts` - so it needs the same "name plus its first line" min_lead
+        # protection the character_on_own_line layout uses, in case this
+        # speech needs a *third* page (or more) and the same stranding bug
+        # would otherwise recur there.
+        next_min_lead = self.min_lead
         if self.style.more_continued:
             cont_name = f"{self.name} {self.style.continued_text}"
             next_parts = [Paragraph(render_inline(cont_name), self.styles["character"])] + next_parts
+            next_min_lead = min(2, len(next_parts))
 
         # Each half is wrapped in a *new* _SpeechFlowable rather than
         # returned as raw parts: reportlab will call wrap() on both of
@@ -631,8 +698,8 @@ class _SpeechFlowable(Flowable):
         # logic handles a speech that needs three, four, or more pages
         # without this class needing to know that in advance.
         return [
-            _SpeechFlowable(self.name, this_page, self.style, self.styles),
-            _SpeechFlowable(self.name, next_parts, self.style, self.styles),
+            _SpeechFlowable(self.name, this_page, self.style, self.styles, self.min_lead),
+            _SpeechFlowable(self.name, next_parts, self.style, self.styles, next_min_lead),
         ]
 
     def draw(self):
@@ -797,13 +864,22 @@ def _build_story(style, styles, title_page, elements):
         if pending_character is not None:
             if style.character_on_own_line:
                 parts = _character_own_line_parts(pending_character, pending_lines, style, styles)
+                # The name is its own paragraph, separate from the first
+                # line of dialogue/parenthetical that follows it - keep
+                # the two together as one unsplittable unit (see
+                # _SpeechFlowable.split) so a page break can't strand the
+                # bare name with nothing else. The table layout doesn't
+                # need this: its first part already *is* the name and
+                # first line combined into one row.
+                min_lead = 2
             else:
                 parts = _character_block_parts(pending_character, pending_lines, style, styles)
+                min_lead = 1
             if style.more_continued:
                 # Wrapped in the one custom flowable, so a page break
                 # partway through gets a "(MORE)"/"(CONT'D)" cue - see
                 # _SpeechFlowable.
-                story.append(_SpeechFlowable(pending_character, parts, style, styles))
+                story.append(_SpeechFlowable(pending_character, parts, style, styles, min_lead))
             else:
                 # No wrapper at all: `parts` are already independent
                 # flowables (a table, then a Paragraph per further line),
