@@ -16,6 +16,12 @@ Also implements two features common to formal play-submission styles:
 Both are driven by Style.header_strap / Style.paginate_from_body, so a
 style that doesn't want them can simply turn them off.
 
+Character cues support two layouts, chosen per-style via
+Style.character_on_own_line: name and dialogue sharing the first line in a
+hanging-indent table (APT and similar screenplay-adjacent formats), or the
+name as its own centered line with dialogue as separate paragraphs below
+(Dramatists Guild "Modern Play Format" and similar).
+
 Known simplification: a character cue and its full speech are kept
 together as one flowable (no MORE/CONT'D continuation markers), so a very
 long uninterrupted speech that doesn't fit the remainder of a page is
@@ -97,15 +103,25 @@ def _styles(style):
             "character",
             fontName=style.font_bold if style.character_bold else style.font_regular,
             fontSize=style.character_size,
-            leading=style.leading, alignment=TA_LEFT, spaceBefore=0, spaceAfter=0,
+            leading=style.leading, alignment=_ALIGN_MAP[style.character_alignment],
+            spaceBefore=0, spaceAfter=0,
         ),
         "dialogue": ParagraphStyle(
             "dialogue", fontName=style.font_regular, fontSize=style.body_size,
             leading=style.leading, alignment=TA_LEFT, leftIndent=0, rightIndent=0,
             spaceBefore=0, spaceAfter=0,
         ),
+        "parenthetical": ParagraphStyle(
+            "parenthetical",
+            fontName=style.font_italic if style.parenthetical_italic else style.font_regular,
+            fontSize=style.body_size, leading=style.leading, alignment=TA_LEFT,
+            leftIndent=style.parenthetical_left_indent,
+            textColor=Color(*style.action_color),
+            spaceBefore=0, spaceAfter=0,
+        ),
         "action": ParagraphStyle(
-            "action", fontName=style.font_italic, fontSize=style.action_size,
+            "action", fontName=style.font_italic if style.action_italic else style.font_regular,
+            fontSize=style.action_size,
             leading=style.leading, alignment=TA_LEFT,
             leftIndent=style.action_left_indent, rightIndent=style.action_right_indent,
             textColor=Color(*style.action_color),
@@ -201,7 +217,9 @@ def _character_block_flowable(name, lines, style, styles):
     for kind, text in lines:
         rendered = render_inline(text)
         if kind == "parenthetical":
-            parts.append(f'<font color="{tint_hex}"><i>{rendered}</i></font>')
+            if style.parenthetical_italic:
+                rendered = f"<i>{rendered}</i>"
+            parts.append(f'<font color="{tint_hex}">{rendered}</font>')
         else:
             parts.append(rendered)
     content_para = Paragraph("<br/>".join(parts) if parts else "", styles["dialogue"])
@@ -227,6 +245,21 @@ def _character_block_flowable(name, lines, style, styles):
         )
     )
     return KeepTogether([table])
+
+
+def _character_own_line_flowable(name, lines, style, styles):
+    """"Modern Play Format" layout: the character name is its own centered
+    paragraph, with dialogue and parentheticals as separate full-width
+    paragraphs below it - as opposed to APT's table layout, which puts the
+    name and the first line of dialogue on the same line."""
+    flowables = [Paragraph(render_inline(name), styles["character"])]
+    for kind, text in lines:
+        rendered = render_inline(text)
+        if kind == "parenthetical":
+            flowables.append(Paragraph(rendered, styles["parenthetical"]))
+        else:
+            flowables.append(Paragraph(rendered, styles["dialogue"]))
+    return KeepTogether(flowables)
 
 
 class _ScribeDocTemplate(SimpleDocTemplate):
@@ -324,7 +357,10 @@ def _build_story(style, styles, title_page, elements):
     def flush_char_block():
         nonlocal at_fresh_page, pending_character
         if pending_character is not None:
-            block = _character_block_flowable(pending_character, pending_lines, style, styles)
+            if style.character_on_own_line:
+                block = _character_own_line_flowable(pending_character, pending_lines, style, styles)
+            else:
+                block = _character_block_flowable(pending_character, pending_lines, style, styles)
             story.append(block)
             story.append(Spacer(1, style.speech_gap))
             pending_character = None
@@ -351,8 +387,11 @@ def _build_story(style, styles, title_page, elements):
         if el.type == "section":
             depth = el.meta.get("depth", 1)
             heading_style = styles["act"] if depth == 1 else styles["scene_heading"]
-            text = el.text.upper()
-            if style.act_underline and depth == 1:
+            if depth == 1:
+                text = el.text.upper()
+            else:
+                text = el.text.upper() if style.scene_section_uppercase else el.text
+            if (style.act_underline if depth == 1 else style.scene_underline):
                 text = f"<u>{text}</u>"
             para = Paragraph(text, heading_style)
             para.apt_scene = el.text.upper()
@@ -370,7 +409,10 @@ def _build_story(style, styles, title_page, elements):
                     display_text = f"{formatted} {heading_text}"
                 else:  # "after"
                     display_text = f"{heading_text} {formatted}"
-            para = Paragraph(render_inline(display_text), styles["scene_heading"])
+            rendered = render_inline(display_text)
+            if style.scene_underline:
+                rendered = f"<u>{rendered}</u>"
+            para = Paragraph(rendered, styles["scene_heading"])
             para.apt_scene = display_text if style.scene_number_in_header_strap else heading_text
             story.append(mark_scene_start(para))
             at_fresh_page = False
@@ -454,11 +496,17 @@ def build_pdf(style, title_page, elements, output_path):
         if page_num_text is not None:
             canvas.setFont(style.pagination_font, style.pagination_size)
             canvas.setFillColor(Color(0, 0, 0))
-            canvas.drawCentredString(
-                style.page_size[0] / 2.0,
-                style.bottom_margin / 2.0,
-                page_num_text,
+            y = (
+                style.page_size[1] - (style.top_margin / 2.0)
+                if style.pagination_position == "top"
+                else style.bottom_margin / 2.0
             )
+            if style.pagination_alignment == "left":
+                canvas.drawString(style.left_margin, y, page_num_text)
+            elif style.pagination_alignment == "right":
+                canvas.drawRightString(style.page_size[0] - style.right_margin, y, page_num_text)
+            else:
+                canvas.drawCentredString(style.page_size[0] / 2.0, y, page_num_text)
 
         if style.header_strap and play_title and dialogue_start_page is not None \
                 and doc_.page >= dialogue_start_page:

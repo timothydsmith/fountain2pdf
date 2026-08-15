@@ -91,3 +91,32 @@ class Style:
     scene_number_position: str = "hide"    # "hide" | "before" | "after"
     scene_number_format: str = "{n}."      # template applied to the number
     scene_number_in_header_strap: bool = False  # include it in the running header?
+
+    # Character-cue layout. APT-style formats share the name and dialogue on
+    # one line (a hanging-indent table); "Modern Play Format" styles put the
+    # name on its own centered line, with dialogue as separate paragraphs
+    # below it. character_alignment only matters when character_on_own_line
+    # is True - in the shared-line table layout the name always sits flush
+    # left in its own column, regardless of this setting.
+    character_on_own_line: bool = False
+    character_alignment: str = "left"      # "left" | "center" | "right"
+
+    # Action / stage-direction paragraph
+    action_italic: bool = True             # False for styles that set stage
+                                            # direction in the regular face
+
+    # Parentheticals within a speech ("(beat)"). Only parenthetical_italic
+    # applies to both layouts; parenthetical_left_indent (extra indent past
+    # the dialogue's own margin) only applies when character_on_own_line is
+    # True - the shared-line table layout has no separate indent for these.
+    parenthetical_italic: bool = True
+    parenthetical_left_indent: float = 0
+
+    # Where page numbers are drawn.
+    pagination_position: str = "bottom"    # "top" | "bottom"
+    pagination_alignment: str = "center"   # "left" | "center" | "right"
+
+    scene_section_uppercase: bool = True   # uppercase depth>1 sections ("## Scene
+                                            # One"); Act sections (depth 1) and true
+                                            # scene_heading elements (INT./EXT./forced
+                                            # ".") are always uppercased regardless

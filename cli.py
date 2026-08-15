@@ -7,6 +7,9 @@ Usage:
     python cli.py input.fountain -o output.pdf
     python cli.py input.fountain --style apt
     python cli.py input.fountain --anonymise
+
+Styles: modern (Dramatists Guild Modern Play Format, default), apt
+(Australian Plays Transform submission format).
 """
 
 import argparse
@@ -29,8 +32,8 @@ def main(argv=None):
         "-o", "--output", help="Output PDF path (default: same name as input, .pdf)"
     )
     ap.add_argument(
-        "--style", default="apt", choices=sorted(STYLES),
-        help="Output format style (default: apt)",
+        "--style", default="modern", choices=sorted(STYLES),
+        help="Output format style (default: modern)",
     )
     ap.add_argument(
         "--anonymise", "--anonymize", dest="anonymise", action="store_true",

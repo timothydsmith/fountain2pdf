@@ -8,9 +8,11 @@ To add a new style:
 """
 
 from . import apt
+from . import modern
 
 STYLES = {
     "apt": apt,
+    "modern": modern,
 }
 
 
