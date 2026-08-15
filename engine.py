@@ -426,7 +426,7 @@ def build_pdf(style, title_page, elements, output_path):
     events = probe_doc.scene_events
     ei = 0
     for p in range(1, probe_doc.page + 1):
-        while ei < len(events) and events[ei][0] < p:
+        while ei < len(events) and events[ei][0] <= p:
             last_scene = events[ei][1]
             ei += 1
         scene_by_page[p] = last_scene
