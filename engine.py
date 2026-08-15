@@ -22,10 +22,15 @@ hanging-indent table (APT and similar screenplay-adjacent formats), or the
 name as its own centered line with dialogue as separate paragraphs below
 (Dramatists Guild "Modern Play Format" and similar).
 
-Known simplification: a character cue and its full speech are kept
-together as one flowable (no MORE/CONT'D continuation markers), so a very
-long uninterrupted speech that doesn't fit the remainder of a page is
-pushed to the next page as a whole rather than split mid-speech.
+A speech that doesn't fit in the remaining space on a page breaks across
+the page boundary rather than being pushed to the next page as a whole -
+see _SpeechFlowable. Style.more_continued controls whether that break gets
+a "(MORE)" / "(CONT'D)" cue or is left unmarked.
+
+Known simplification: a break can only happen *between* two
+dialogue/parenthetical lines (or between the character name and the first
+line), never in the middle of one - so a single line so long it doesn't
+fit on any one page is still pushed to the next page as a whole.
 
 A note on reportlab, for anyone new to it: reportlab builds a PDF in two
 steps. First you create a list of "flowables" - Paragraph, Spacer,
@@ -54,6 +59,7 @@ from reportlab.platypus import (
     KeepTogether,
     Table,
     TableStyle,
+    Flowable,
 )
 
 from parser import render_inline
@@ -159,6 +165,32 @@ def _styles(style):
             leftIndent=style.parenthetical_left_indent,
             textColor=Color(*style.action_color),
             spaceBefore=0, spaceAfter=0,
+        ),
+        # Only used by the shared-line (character_on_own_line=False) table
+        # layout, for a speech's *second* and later lines: the first line
+        # shares a table row with the character name (see
+        # _character_block_parts), but every line after that is its own
+        # standalone paragraph so a page break can fall between them. These
+        # two styles give those standalone paragraphs the same hanging
+        # indent the table would have given them, so they still line up
+        # under the dialogue column rather than under the name.
+        "dialogue_continued": ParagraphStyle(
+            "dialogue_continued", fontName=style.font_regular, fontSize=style.body_size,
+            leading=style.leading, alignment=TA_LEFT,
+            leftIndent=style.name_col_width + style.dialogue_gutter, rightIndent=0,
+            spaceBefore=0, spaceAfter=0,
+        ),
+        "parenthetical_continued": ParagraphStyle(
+            "parenthetical_continued",
+            fontName=style.font_italic if style.parenthetical_italic else style.font_regular,
+            fontSize=style.body_size, leading=style.leading, alignment=TA_LEFT,
+            leftIndent=style.name_col_width + style.dialogue_gutter,
+            textColor=Color(*style.action_color),
+            spaceBefore=0, spaceAfter=0,
+        ),
+        "more_continued": ParagraphStyle(
+            "more_continued", fontName=style.font_regular, fontSize=style.body_size,
+            leading=style.leading, alignment=TA_CENTER, spaceBefore=6, spaceAfter=0,
         ),
         "action": ParagraphStyle(
             "action", fontName=style.font_italic if style.action_italic else style.font_regular,
@@ -382,46 +414,56 @@ def _preliminary_flowables(title_page, styles, style):
     return pages
 
 
-def _character_block_flowable(name, lines, style, styles):
-    """Two-column, borderless table: character name in a fixed-width left
-    column (the 'tab stop'), parenthetical + dialogue in the right column.
-    Table columns give wrapped lines a free, exact hanging indent - every
-    continuation line lines up under the first."""
-    name_para = Paragraph(render_inline(name), styles["character"])
+def _tint_hex(style):
+    """Build a "#rrggbb" hex string reportlab's inline <font color="..."> tag
+    can use, from the style's (r, g, b) tuple where each channel is a float
+    0..1. `round(c * 255)` scales that up to a 0..255 byte value, and
+    "%02x" formats it as two lowercase hex digits (e.g. 26 -> "1a"),
+    zero-padded so single-digit values still take up two characters."""
+    return "#%02x%02x%02x" % tuple(round(c * 255) for c in style.action_color)
 
-    # Build a "#rrggbb" hex string reportlab's inline <font color="..."> tag
-    # can use, from the style's (r, g, b) tuple where each channel is a
-    # float 0..1. `round(c * 255)` scales that up to a 0..255 byte value,
-    # and "%02x" formats it as two lowercase hex digits (e.g. 26 -> "1a"),
-    # zero-padded so single-digit values still take up two characters.
-    tint_hex = "#%02x%02x%02x" % tuple(round(c * 255) for c in style.action_color)
-    parts = []
-    for kind, text in lines:
+
+def _character_block_parts(name, lines, style, styles):
+    """APT-style layout: the character name and the *first* line of the
+    speech share one table row (a fixed-width left column for the name,
+    the "tab stop" - reportlab has no built-in way to draw a hanging
+    indent whose label is a separately-styled flowable, so a one-row,
+    two-column table is the standard workaround). Every line after the
+    first becomes its own standalone paragraph, indented to line up under
+    that same column, rather than being crammed into the table too -
+    returning a flat list of independent parts like this (instead of one
+    combined flowable) is what lets a page break land between any two of
+    them; see _SpeechFlowable, which is what actually uses this list."""
+    name_para = Paragraph(render_inline(name), styles["character"])
+    if not lines:
+        # A character cue with no dialogue at all (unusual, but the parser
+        # doesn't forbid it) - just the name, no table needed.
+        return [name_para]
+
+    tint_hex = _tint_hex(style)
+
+    def render_line(kind, text):
         rendered = render_inline(text)
-        if kind == "parenthetical":
-            if style.parenthetical_italic:
-                rendered = f"<i>{rendered}</i>"
-            parts.append(f'<font color="{tint_hex}">{rendered}</font>')
-        else:
-            parts.append(rendered)
-    # A table cell can only hold one flowable, so every line of this
-    # speech - dialogue and parentheticals alike - is joined into a single
-    # Paragraph, with "<br/>" (reportlab's inline line-break tag) between
-    # them rather than being separate paragraphs. `"<br/>".join(parts) if
-    # parts else ""` avoids passing Paragraph an empty string built from
-    # nothing, for the (rare) case where a character cue has no dialogue.
-    content_para = Paragraph("<br/>".join(parts) if parts else "", styles["dialogue"])
+        if kind == "parenthetical" and style.parenthetical_italic:
+            rendered = f"<i>{rendered}</i>"
+        return rendered
+
+    first_kind, first_text = lines[0]
+    first_rendered = render_line(first_kind, first_text)
+    if first_kind == "parenthetical":
+        first_rendered = f'<font color="{tint_hex}">{first_rendered}</font>'
+    first_para = Paragraph(first_rendered, styles["dialogue"])
 
     available_width = style.page_size[0] - style.left_margin - style.right_margin
     dialogue_col_width = available_width - style.name_col_width
 
-    # A one-row, two-column Table: [[name_para, content_para]] is a list
+    # A one-row, two-column Table: [[name_para, first_para]] is a list
     # containing one row, which is itself a list of the two cells in that
     # row. colWidths fixes each column's width explicitly (rather than
     # letting the table size itself to its content), which is what makes
     # every character name column line up at the same x position.
     table = Table(
-        [[name_para, content_para]],
+        [[name_para, first_para]],
         colWidths=[style.name_col_width, dialogue_col_width],
         hAlign="LEFT",
     )
@@ -445,33 +487,143 @@ def _character_block_flowable(name, lines, style, styles):
             ]
         )
     )
-    # KeepTogether wraps one or more flowables so reportlab treats them as
-    # an atomic unit for pagination purposes: if the whole group doesn't
-    # fit in the remaining space on the current page, the *entire* group
-    # moves to the next page rather than splitting partway through. Here
-    # it's wrapping a single-item list (just the table), which still
-    # matters because a Table by itself could otherwise be split across a
-    # page boundary mid-row.
-    return KeepTogether([table])
+
+    parts = [table]
+    for kind, text in lines[1:]:
+        rendered = render_line(kind, text)
+        style_key = "parenthetical_continued" if kind == "parenthetical" else "dialogue_continued"
+        parts.append(Paragraph(rendered, styles[style_key]))
+    return parts
 
 
-def _character_own_line_flowable(name, lines, style, styles):
+def _character_own_line_parts(name, lines, style, styles):
     """"Modern Play Format" layout: the character name is its own centered
     paragraph, with dialogue and parentheticals as separate full-width
     paragraphs below it - as opposed to APT's table layout, which puts the
-    name and the first line of dialogue on the same line."""
-    flowables = [Paragraph(render_inline(name), styles["character"])]
+    name and the first line of dialogue on the same line. Already a flat
+    list of independent parts, one per line - nothing further to split up
+    here, unlike the table layout above."""
+    parts = [Paragraph(render_inline(name), styles["character"])]
     for kind, text in lines:
         rendered = render_inline(text)
         if kind == "parenthetical":
-            flowables.append(Paragraph(rendered, styles["parenthetical"]))
+            parts.append(Paragraph(rendered, styles["parenthetical"]))
         else:
-            flowables.append(Paragraph(rendered, styles["dialogue"]))
-    # Unlike the table layout above, this is a *list* of separate
-    # flowables (one per line) all wrapped together in one KeepTogether, so
-    # they still move to the next page as a unit if they don't fit, even
-    # though each line is its own independent Paragraph.
-    return KeepTogether(flowables)
+            parts.append(Paragraph(rendered, styles["dialogue"]))
+    return parts
+
+
+class _SpeechFlowable(Flowable):
+    """A character cue plus its full speech, able to split across a page
+    break between any two of its `parts` (the table/paragraph produced by
+    _character_block_parts or _character_own_line_parts) - unlike wrapping
+    those parts in KeepTogether, which used to force the entire speech
+    onto one page. Only used when Style.more_continued is set; otherwise
+    _build_story just adds `parts` straight to the story and lets
+    reportlab's normal flowable-by-flowable pagination handle the break
+    silently (see flush_char_block).
+
+    This is a fairly deep dive into reportlab internals, so a bit of extra
+    background for anyone who hasn't written a custom Flowable before:
+    reportlab decides whether a flowable fits on the current page by
+    calling its wrap(availWidth, availHeight) method, which must return
+    (width, height) - if that height doesn't fit, reportlab calls
+    split(availWidth, availHeight) instead, which must return a list of
+    *replacement* flowables: the first is added to the current page, the
+    rest go on to be tried (and, if necessary, split again) on the next
+    one. The base Flowable class's default split() just returns [],
+    meaning "not splittable, move the whole thing to the next page" - that
+    default is what KeepTogether relies on; this class overrides it with
+    real logic instead.
+    """
+
+    def __init__(self, name, parts, style, styles):
+        Flowable.__init__(self)
+        self.name = name
+        self.parts = parts
+        self.style = style
+        self.styles = styles
+
+    def wrap(self, availWidth, availHeight):
+        # Each part's *natural* height, i.e. as if it had a whole empty
+        # page to itself - a huge availHeight sentinel gets that out of a
+        # part's own wrap() without it trying to split itself. Cached on
+        # self so split() and draw() (called shortly after, at the same
+        # width) don't need to redo this measurement.
+        self._avail_width = availWidth
+        self._heights = [p.wrap(availWidth, 0xFFFFFFF)[1] for p in self.parts]
+        self.width = availWidth
+        self.height = sum(self._heights)
+        return self.width, self.height
+
+    def split(self, availWidth, availHeight):
+        more_para = None
+        more_height = 0
+        if self.style.more_continued:
+            more_para = Paragraph(self.style.more_text, self.styles["more_continued"])
+            more_height = more_para.wrap(availWidth, availHeight)[1]
+
+        # reportlab's contract for split() is that the *first* flowable in
+        # the returned list must actually fit in availHeight - if it
+        # doesn't, reportlab has no valid way to place anything on the
+        # current page and raises a LayoutError. So unlike a first pass at
+        # this, this doesn't force the first part in unconditionally: if
+        # even that alone doesn't fit in what's left on this page, there's
+        # nothing valid to split here, and returning [] tells reportlab to
+        # push this flowable onto a fresh page and ask again there
+        # (starting a page with the room already used up by page furniture
+        # is the normal, expected reason this happens).
+        budget = availHeight - more_height
+        if not self._heights or self._heights[0] > budget:
+            return []
+
+        fitted = []
+        used = 0
+        for part, h in zip(self.parts, self._heights):
+            if used + h > budget:
+                break
+            fitted.append(part)
+            used += h
+
+        remaining = self.parts[len(fitted):]
+        if not remaining:
+            # Nothing left over - reportlab only calls split() when wrap()
+            # already reported this doesn't fit, so this shouldn't
+            # normally happen, but there's nothing useful to split if it
+            # does.
+            return []
+
+        this_page = list(fitted)
+        if more_para is not None:
+            this_page.append(more_para)
+
+        next_parts = list(remaining)
+        if self.style.more_continued:
+            cont_name = f"{self.name} {self.style.continued_text}"
+            next_parts = [Paragraph(render_inline(cont_name), self.styles["character"])] + next_parts
+
+        # Each half is wrapped in a *new* _SpeechFlowable rather than
+        # returned as raw parts: reportlab will call wrap() on both of
+        # these again by itself before drawing/placing them, and if
+        # `next_parts` still doesn't fit on the following page either,
+        # split() will simply be called on it again there - the same
+        # logic handles a speech that needs three, four, or more pages
+        # without this class needing to know that in advance.
+        return [
+            _SpeechFlowable(self.name, this_page, self.style, self.styles),
+            _SpeechFlowable(self.name, next_parts, self.style, self.styles),
+        ]
+
+    def draw(self):
+        # By the time draw() runs, self.canv (the current reportlab
+        # canvas) has been set by the framework, and the canvas origin has
+        # already been translated so that (0, 0) here is this flowable's
+        # own bottom-left corner - draw() only ever needs to think in
+        # those local coordinates, never in page coordinates.
+        cur_top = self.height
+        for part, h in zip(self.parts, self._heights):
+            cur_top -= h
+            part.drawOn(self.canv, 0, cur_top)
 
 
 class _ScribeDocTemplate(SimpleDocTemplate):
@@ -623,10 +775,22 @@ def _build_story(style, styles, title_page, elements):
         nonlocal at_fresh_page, pending_character
         if pending_character is not None:
             if style.character_on_own_line:
-                block = _character_own_line_flowable(pending_character, pending_lines, style, styles)
+                parts = _character_own_line_parts(pending_character, pending_lines, style, styles)
             else:
-                block = _character_block_flowable(pending_character, pending_lines, style, styles)
-            story.append(block)
+                parts = _character_block_parts(pending_character, pending_lines, style, styles)
+            if style.more_continued:
+                # Wrapped in the one custom flowable, so a page break
+                # partway through gets a "(MORE)"/"(CONT'D)" cue - see
+                # _SpeechFlowable.
+                story.append(_SpeechFlowable(pending_character, parts, style, styles))
+            else:
+                # No wrapper at all: `parts` are already independent
+                # flowables (a table, then a Paragraph per further line),
+                # so reportlab's normal story-flowing logic already breaks
+                # between them - and even mid-paragraph within one of
+                # them, via each Paragraph's own built-in split() - without
+                # any help from us.
+                story.extend(parts)
             story.append(Spacer(1, style.speech_gap))
             pending_character = None
             # list.clear() empties the list in place; pending_lines still

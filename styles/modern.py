@@ -25,6 +25,10 @@ https://www.dramatistsguild.com/sites/default/files/2020-01/General-SFI-Formatti
   - Pagination: page number only (e.g. "16."), top right of the page,
     starting at the first page of the play; the title page and any
     preliminary pages (cast list, setting/time, etc.) are left unnumbered
+  - A speech that breaks across a page just continues on the next page,
+    with no "(MORE)"/"(CONT'D)" cue - neither source document mentions
+    that screenplay-style convention, so it's left off by default here;
+    set more_continued=True below if your house style wants it anyway
 """
 
 from reportlab.lib.pagesizes import letter
@@ -110,4 +114,5 @@ def get_style():
         scene_number_position="before",
         scene_number_format="Scene {n}.",
         scene_number_in_header_strap=False,
+        more_continued=False,
     )

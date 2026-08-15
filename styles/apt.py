@@ -21,6 +21,9 @@ Australian Plays Transform (APT) play submission style, per
   - Forced scene numbers ("INT. HOUSE - DAY #2A#") are printed at the
     start of the Scene Heading as "2A." and are left out of the running
     header strap
+  - A speech that breaks across a page gets a "(MORE)" cue at the bottom
+    of the page and resumes with the character's name plus "(CONT'D)" at
+    the top of the next, per screenplay-adjacent convention
 
 Palatino is a commercial font, so it isn't bundled here - this module looks
 for it (or a free equivalent) already installed on the machine running the
@@ -166,4 +169,7 @@ def get_style():
         scene_number_position="before",
         scene_number_format="SCENE {n}:",
         scene_number_in_header_strap=False,
+        more_continued=True,
+        more_text="(MORE)",
+        continued_text="(CONT'D)",
     )

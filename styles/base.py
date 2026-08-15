@@ -147,3 +147,14 @@ class Style:
                                             # One"); Act sections (depth 1) and true
                                             # scene_heading elements (INT./EXT./forced
                                             # ".") are always uppercased regardless
+
+    # A speech that doesn't fit in the remaining space on a page always
+    # breaks across the page boundary (between dialogue/parenthetical
+    # lines - never mid-line) - more_continued only controls whether that
+    # break is marked with a "(MORE)"/"(CONT'D)" cue, or left unmarked.
+    more_continued: bool = False
+    more_text: str = "(MORE)"              # shown at the bottom of the page
+                                            # where a speech breaks
+    continued_text: str = "(CONT'D)"       # appended to the repeated
+                                            # character name at the top of
+                                            # the next page
