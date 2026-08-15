@@ -15,6 +15,33 @@ To add a new style:
 from dataclasses import dataclass
 
 
+# @dataclass is a decorator (a function that wraps another - here, a class
+# - and hands back a modified version of it) from Python's standard
+# library. Applied to a class that's just a list of typed attributes like
+# this one, it automatically generates the boilerplate you'd otherwise
+# have to write by hand: an __init__ method that takes every field below
+# as a parameter and assigns it to self, plus a sensible __repr__ (so
+# printing a Style shows all its field values) and an __eq__ (so two Style
+# objects with the same field values compare equal). Without @dataclass,
+# this class would need something like:
+#
+#   class Style:
+#       def __init__(self, key, display_name, page_size, ...):
+#           self.key = key
+#           self.display_name = display_name
+#           self.page_size = page_size
+#           ...
+#
+# spelled out for all ~40 fields below - @dataclass generates exactly that
+# from the type-annotated attribute list instead.
+#
+# Fields without a default value (most of the ones below) become required
+# constructor arguments - every style module must explicitly decide a
+# value for them. Fields with a default (e.g. `pagination_format: str =
+# "{n}"`) are optional; a style module that doesn't care can simply leave
+# them out and get the default. Python requires all the no-default fields
+# to come before any fields that do have defaults, which is why the ones
+# with `= something` are all grouped near the end of the class.
 @dataclass
 class Style:
     key: str                # CLI --style value, e.g. "apt"

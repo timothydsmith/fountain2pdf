@@ -28,12 +28,19 @@ https://www.dramatistsguild.com/sites/default/files/2020-01/General-SFI-Formatti
 """
 
 from reportlab.lib.pagesizes import letter
+# `inch`, like `mm` in styles/apt.py, is just a plain number - the number
+# of reportlab points in one inch - used to convert measurements written
+# in inches (the unit the Guild's spec uses) into points at the point of
+# use, e.g. `1.5 * inch`.
 from reportlab.lib.units import inch
 
 from styles.base import Style
 
 
 def get_style():
+    """Build and return this style's Style object. Called once per run by
+    styles.load_style("modern") - the default style, used whenever
+    `--style` isn't passed on the command line at all."""
     return Style(
         key="modern",
         display_name="Dramatists Guild Modern Play Format",
@@ -42,6 +49,12 @@ def get_style():
         right_margin=1 * inch,
         top_margin=1 * inch,
         bottom_margin=1 * inch,
+        # "Times-Roman"/"Times-Bold"/"Times-Italic"/"Times-BoldItalic" are
+        # four of reportlab's 14 built-in "base" PDF fonts - every PDF
+        # viewer knows how to display them without the font itself being
+        # embedded in the file, so unlike styles/apt.py's Palatino, this
+        # style needs no font-file hunting at all (see fonts.py): these
+        # names can just be used directly.
         font_regular="Times-Roman",
         font_bold="Times-Bold",
         font_italic="Times-Italic",
@@ -59,6 +72,13 @@ def get_style():
         character_bold=False,
         character_on_own_line=True,
         character_alignment="center",
+        # `letter` is a (width, height) tuple in points, so letter[0] is
+        # the page width; halving it gives the page's horizontal center.
+        # action_left_indent is measured from the *text frame's* left edge
+        # (i.e. relative to left_margin, not the page edge - see
+        # engine.py's "action" ParagraphStyle, which uses this value
+        # directly as leftIndent), so we subtract left_margin back off the
+        # page-center point to get the right relative offset.
         action_left_indent=(letter[0] / 2.0) - (1.5 * inch),  # dialogue's left margin is 1.5in;
                                                                 # action starts at the page's
                                                                 # horizontal center instead

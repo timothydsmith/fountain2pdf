@@ -28,18 +28,38 @@ script. Set the FOUNTAIN2PDF_PALATINO_DIR environment variable to a folder
 containing Palatino-Regular/-Bold/-Italic/-BoldItalic.ttf (or .otf) files to
 point it somewhere specific; otherwise it checks the standard macOS/Windows
 install locations, and falls back to Times-Roman with a warning.
+
+This file is a good template to copy when adding a new style: apart from
+the font-hunting section below (only needed if your style wants a
+commercial/non-bundled font), the real content is the single Style(...)
+call in get_style(), which is just a long list of `field=value` settings -
+see styles/base.py for what each field means.
 """
 
 import os
 
 from reportlab.lib.pagesizes import A4
+# reportlab measures everything internally in "points" (1/72 inch, the
+# standard unit in print/typesetting), but that's not a natural unit to
+# write margins in by hand. `mm` here is a plain number - the number of
+# points in one millimetre - so writing `25 * mm` converts "25 millimetres"
+# into the point value reportlab actually wants, right at the point of use.
 from reportlab.lib.units import mm
 
 import fonts
 from styles.base import Style
 
+# os.environ is a dict-like object holding the current process's
+# environment variables; .get() (rather than plain indexing with []) means
+# "give me this variable's value if it's set, or None if it isn't" instead
+# of raising a KeyError when a user hasn't set it - this variable is
+# optional, so None here just means "no directory override; fonts.py will
+# fall back to the standard install-location candidates below."
 PALATINO_DIR = os.environ.get("FOUNTAIN2PDF_PALATINO_DIR")
 
+# Places to look for a real Palatino (or metric-compatible equivalent)
+# font, tried in order by fonts.register_family() until one is found - see
+# fonts.py for exactly how each of these dicts gets used.
 PALATINO_CANDIDATES = [
     {  # macOS ships an actual Palatino as a TrueType collection
         "regular": "/System/Library/Fonts/Palatino.ttc",
@@ -65,12 +85,23 @@ PALATINO_CANDIDATES = [
 
 
 def get_style():
+    """Build and return this style's Style object. Called once per run by
+    styles.load_style("apt") whenever `--style apt` is used."""
+    # fonts.register_family returns a 5-item tuple; this line unpacks it
+    # straight into five separate names in one step; rather than
+    # `result = fonts.register_family(...)` followed by `reg =
+    # result[0]`, etc. Python matches them up positionally, left to right.
     reg, bold, ital, bi, found = fonts.register_family(
         "Palatino",
         PALATINO_CANDIDATES,
         fallback=("Times-Roman", "Times-Bold", "Times-Italic", "Times-BoldItalic"),
         extra_dir=PALATINO_DIR,
     )
+    # A conditional expression again (see engine.py's _styles() for more on
+    # these): if a real Palatino was `found`, there's nothing to warn
+    # about, so the message is just an empty string; otherwise it's this
+    # longer explanation, which cli.py prints to stderr when
+    # style.using_real_font is False.
     fallback_message = (
         ""
         if found
@@ -83,6 +114,12 @@ def get_style():
         )
     )
 
+    # Every argument below is passed by keyword (`field=value`), which is
+    # why the order doesn't have to match the order fields were declared
+    # in styles/base.py's Style class - keyword arguments are matched up
+    # by name, not by position. This is the one place all of APT's actual
+    # formatting decisions live; engine.py never hardcodes anything
+    # APT-specific, it only ever reads values back out of this object.
     return Style(
         key="apt",
         display_name="Australian Plays Transform (APT) submission format",

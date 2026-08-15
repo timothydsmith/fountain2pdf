@@ -26,6 +26,17 @@ Known simplification: a character cue and its full speech are kept
 together as one flowable (no MORE/CONT'D continuation markers), so a very
 long uninterrupted speech that doesn't fit the remainder of a page is
 pushed to the next page as a whole rather than split mid-speech.
+
+A note on reportlab, for anyone new to it: reportlab builds a PDF in two
+steps. First you create a list of "flowables" - Paragraph, Spacer,
+PageBreak, Table, etc. - which describe *what* to draw but not *where*;
+each one knows how to lay itself out and how tall it is, but has no idea
+what page it'll land on. Then you hand that list ("the story") to a
+SimpleDocTemplate and call .build() on it, which flows the flowables down
+the page(s) one after another, starting a new page whenever the current
+one runs out of room (or a PageBreak() forces one). This module's job is
+almost entirely "turn a list of parser.Element into a list of flowables" -
+see _build_story() below, which is the heart of the module.
 """
 
 import io
@@ -45,17 +56,37 @@ from reportlab.platypus import (
 
 from parser import render_inline
 
+# The three "preliminary" pages (Characters / Setting & Time / Scene
+# Breakdown) that can appear right after the title page. Each entry is
+# (heading text to print, [title-page keys to look for, in priority
+# order]) - see _preliminary_flowables() below for how this list is used.
 PRELIMINARY_SECTIONS = [
-    # (heading text, title-page keys to look for, in priority order)
     ("CHARACTERS", ["characters", "character"]),
     ("SETTING & TIME", ["setting", "time"]),
     ("SCENE BREAKDOWN", ["scene breakdown", "scenes", "scene_breakdown"]),
 ]
 
+# Style objects store alignment as a plain string ("left"/"center"/"right")
+# so a styles/*.py file doesn't need to import anything from reportlab just
+# to set one field. This dict translates that string into the actual
+# reportlab constant (just an integer under the hood) that ParagraphStyle
+# expects.
 _ALIGN_MAP = {"left": TA_LEFT, "center": TA_CENTER, "right": TA_RIGHT}
 
 
 def _styles(style):
+    """Build the full set of reportlab ParagraphStyle objects for one
+    render, from a Style config object. Returns a dict keyed by name (e.g.
+    "dialogue", "action") - _build_story() below looks styles up by that
+    name as it walks the parsed elements. Rebuilding this fresh for every
+    render (rather than caching it) keeps things simple: nothing here holds
+    state between pages or between builds.
+
+    A ParagraphStyle is reportlab's bundle of "how should this block of
+    text look" - font, size, line spacing (leading), alignment, indents,
+    and spacing before/after the paragraph. A Paragraph flowable (created
+    later, in _build_story) always takes one of these plus the actual text.
+    """
     return {
         "title": ParagraphStyle(
             "title", fontName=style.font_regular, fontSize=style.title_size,
@@ -79,6 +110,14 @@ def _styles(style):
         ),
         "act": ParagraphStyle(
             "act",
+            # Pick the one font file that matches this style's bold/italic
+            # flags. reportlab doesn't synthesize bold or italic on the fly
+            # from a regular font - each combination (regular, bold,
+            # italic, bold+italic) has to be a separately registered font,
+            # so we choose between the four up front. This chain of
+            # `... if ... else ... if ... else ...` is a Python
+            # conditional expression (a "ternary"); reading it top to
+            # bottom, the first condition that's True wins.
             fontName=(
                 style.font_bold_italic if (style.act_bold and style.act_italic) else
                 style.font_bold if style.act_bold else
@@ -124,6 +163,10 @@ def _styles(style):
             fontSize=style.action_size,
             leading=style.leading, alignment=TA_LEFT,
             leftIndent=style.action_left_indent, rightIndent=style.action_right_indent,
+            # Color(*style.action_color) unpacks the (r, g, b) tuple from
+            # the style into Color's three positional arguments - the same
+            # as writing Color(style.action_color[0], style.action_color[1],
+            # style.action_color[2]).
             textColor=Color(*style.action_color),
             spaceBefore=10, spaceAfter=10,
         ),
@@ -150,11 +193,26 @@ def _styles(style):
 
 
 def _title_page_flowables(title_page, styles):
+    """Build the flowables for the title page: title, byline (credit +
+    author), then any remaining title-page keys (address, contact details,
+    etc.) as a lower block of plain text."""
+    # Spacer(width, height) just reserves vertical space - width is ignored
+    # for a Spacer used in a single-column story like this one, only height
+    # matters. 28.35 points per cm, so this is "leave about 6.5cm blank"
+    # before the title starts, roughly centering it on the page.
     flow = [Spacer(1, 6.5 * 28.35)]  # ~6.5cm, matches the old title-page layout
 
+    # title_page is a dict[str, list[str]] (see parser._parse_title_page) -
+    # every value is a list because a title-page key can span several
+    # lines (e.g. a multi-line "Contact:" block). " ".join(...) collapses
+    # that back down to one string; `.get("title", [])` returns an empty
+    # list if there's no "title" key at all, so the join still works.
     title = " ".join(title_page.get("title", [])) or "Untitled"
     flow.append(Paragraph(render_inline(title), styles["title"]))
 
+    # `title_page.get("author", title_page.get("authors", []))` tries the
+    # singular key first and falls back to the plural if that's missing -
+    # a nested .get() call used as the default value of the outer one.
     author = " ".join(title_page.get("author", title_page.get("authors", [])))
     credit = " ".join(title_page.get("credit", []))
     if credit:
@@ -166,6 +224,13 @@ def _title_page_flowables(title_page, styles):
     for key, value in title_page.items():
         if key in ("title", "author", "authors", "credit"):
             continue
+        # Skip anything that's actually a Characters/Setting/Scene
+        # Breakdown key - those get their own preliminary pages (see
+        # _preliminary_flowables) rather than showing up here as if they
+        # were address details. This is a generator expression inside
+        # any(): "is `key` equal to any alias, across every (heading,
+        # keys) pair in PRELIMINARY_SECTIONS?" - it short-circuits and
+        # returns True as soon as one match is found.
         if any(key == k for _, keys in PRELIMINARY_SECTIONS for k in keys):
             continue
         contact_lines.extend(value)
@@ -178,6 +243,10 @@ def _title_page_flowables(title_page, styles):
 
 
 def _get_first(title_page, keys):
+    """Return the first non-empty value found in title_page for any of
+    `keys` (tried in order), or None if none of them are present. Used so
+    a preliminary section can accept a couple of different spellings of
+    its key (e.g. "characters" or "character")."""
     for k in keys:
         if k in title_page and title_page[k]:
             return title_page[k]
@@ -191,8 +260,16 @@ def _preliminary_flowables(title_page, styles):
     pages = []
     for heading, keys in PRELIMINARY_SECTIONS:
         if heading == "SETTING & TIME":
+            # This one section is special-cased because it merges two
+            # separate title-page keys ("setting" and "time") into a
+            # single page, rather than looking up one list of aliases the
+            # way the other two sections do.
             setting = _get_first(title_page, ["setting"])
             time_ = _get_first(title_page, ["time"])
+            # `(setting or []) + (time_ or [])`: _get_first can return None,
+            # and you can't concatenate None with a list, so this swaps in
+            # an empty list wherever the value was missing before adding
+            # the two together.
             lines = (setting or []) + (time_ or [])
         else:
             lines = _get_first(title_page, keys)
@@ -201,6 +278,11 @@ def _preliminary_flowables(title_page, styles):
         flow = [Paragraph(heading, styles["prelim_heading"])]
         for line in lines:
             flow.append(Paragraph(render_inline(line), styles["prelim_body"]))
+        # Each section becomes its own list of flowables here (`pages` is a
+        # list of lists) rather than one flat list, because _build_story()
+        # needs to insert a PageBreak() between sections - it can't do that
+        # unless it knows where one section's flowables end and the next
+        # one's begin.
         pages.append(flow)
     return pages
 
@@ -212,6 +294,11 @@ def _character_block_flowable(name, lines, style, styles):
     continuation line lines up under the first."""
     name_para = Paragraph(render_inline(name), styles["character"])
 
+    # Build a "#rrggbb" hex string reportlab's inline <font color="..."> tag
+    # can use, from the style's (r, g, b) tuple where each channel is a
+    # float 0..1. `round(c * 255)` scales that up to a 0..255 byte value,
+    # and "%02x" formats it as two lowercase hex digits (e.g. 26 -> "1a"),
+    # zero-padded so single-digit values still take up two characters.
     tint_hex = "#%02x%02x%02x" % tuple(round(c * 255) for c in style.action_color)
     parts = []
     for kind, text in lines:
@@ -222,16 +309,35 @@ def _character_block_flowable(name, lines, style, styles):
             parts.append(f'<font color="{tint_hex}">{rendered}</font>')
         else:
             parts.append(rendered)
+    # A table cell can only hold one flowable, so every line of this
+    # speech - dialogue and parentheticals alike - is joined into a single
+    # Paragraph, with "<br/>" (reportlab's inline line-break tag) between
+    # them rather than being separate paragraphs. `"<br/>".join(parts) if
+    # parts else ""` avoids passing Paragraph an empty string built from
+    # nothing, for the (rare) case where a character cue has no dialogue.
     content_para = Paragraph("<br/>".join(parts) if parts else "", styles["dialogue"])
 
     available_width = style.page_size[0] - style.left_margin - style.right_margin
     dialogue_col_width = available_width - style.name_col_width
 
+    # A one-row, two-column Table: [[name_para, content_para]] is a list
+    # containing one row, which is itself a list of the two cells in that
+    # row. colWidths fixes each column's width explicitly (rather than
+    # letting the table size itself to its content), which is what makes
+    # every character name column line up at the same x position.
     table = Table(
         [[name_para, content_para]],
         colWidths=[style.name_col_width, dialogue_col_width],
         hAlign="LEFT",
     )
+    # TableStyle takes a list of (command, (start_col, start_row),
+    # (end_col, end_row), value) tuples. (0, 0), (-1, -1) means "from the
+    # first cell to the last cell" - -1 is Python's usual "count from the
+    # end" indexing, so this covers the whole table regardless of its
+    # actual size. Padding is zeroed out on all sides so the table doesn't
+    # add any space beyond what the paragraph styles already specify,
+    # except for a manually-set left padding on the second column, which
+    # is what actually creates the gap between the name and the dialogue.
     table.setStyle(
         TableStyle(
             [
@@ -244,6 +350,13 @@ def _character_block_flowable(name, lines, style, styles):
             ]
         )
     )
+    # KeepTogether wraps one or more flowables so reportlab treats them as
+    # an atomic unit for pagination purposes: if the whole group doesn't
+    # fit in the remaining space on the current page, the *entire* group
+    # moves to the next page rather than splitting partway through. Here
+    # it's wrapping a single-item list (just the table), which still
+    # matters because a Table by itself could otherwise be split across a
+    # page boundary mid-row.
     return KeepTogether([table])
 
 
@@ -259,6 +372,10 @@ def _character_own_line_flowable(name, lines, style, styles):
             flowables.append(Paragraph(rendered, styles["parenthetical"]))
         else:
             flowables.append(Paragraph(rendered, styles["dialogue"]))
+    # Unlike the table layout above, this is a *list* of separate
+    # flowables (one per line) all wrapped together in one KeepTogether, so
+    # they still move to the next page as a unit if they don't fit, even
+    # though each line is its own independent Paragraph.
     return KeepTogether(flowables)
 
 
@@ -281,11 +398,25 @@ class _ScribeDocTemplate(SimpleDocTemplate):
     """
 
     def __init__(self, *args, **kwargs):
+        # Subclassing SimpleDocTemplate: this class *is* one (it inherits
+        # every method SimpleDocTemplate has), plus the extra bits added
+        # here. `SimpleDocTemplate.__init__(self, *args, **kwargs)` runs
+        # the parent class's normal setup first (`*args`/`**kwargs` just
+        # forward on whatever arguments this class was constructed with,
+        # unexamined), then the two lines below add our own extra state on
+        # top of it.
         SimpleDocTemplate.__init__(self, *args, **kwargs)
         self.dialogue_start_page = None
         self.scene_events = []  # [(page_number, scene_text), ...] in order
 
     def afterFlowable(self, flowable):
+        # reportlab calls this automatically after laying out each
+        # flowable during doc.build() - we never call it ourselves.
+        # getattr(flowable, "apt_scene", None) reads the flowable's
+        # apt_scene attribute if it has one, or returns None if it
+        # doesn't (a plain flowable.apt_scene would raise an
+        # AttributeError instead) - most flowables never get this
+        # attribute set at all, so this has to tolerate its absence.
         scene = getattr(flowable, "apt_scene", None)
         if scene is not None:
             self.scene_events.append((self.page, scene))
@@ -293,6 +424,10 @@ class _ScribeDocTemplate(SimpleDocTemplate):
             self.dialogue_start_page = self.page
 
 
+# A lookup table for converting an integer into lowercase Roman numerals,
+# largest value first. Each entry also includes the "subtractive" forms
+# (900 -> "cm", 400 -> "cd", etc.) so the conversion loop below doesn't
+# need any special-case logic for them.
 _ROMAN_NUMERALS = [
     (1000, "m"), (900, "cm"), (500, "d"), (400, "cd"),
     (100, "c"), (90, "xc"), (50, "l"), (40, "xl"),
@@ -301,7 +436,12 @@ _ROMAN_NUMERALS = [
 
 
 def _to_roman(n):
+    """Convert a positive integer to a lowercase Roman numeral string."""
     result = []
+    # Greedy algorithm: repeatedly subtract off the largest value from the
+    # table that still fits, appending its symbol each time, until nothing
+    # is left. E.g. for n=14: 10 fits once ("x", n becomes 4), then 4 fits
+    # once ("iv", n becomes 0) -> "xiv".
     for value, symbol in _ROMAN_NUMERALS:
         while n >= value:
             result.append(symbol)
@@ -312,6 +452,13 @@ def _to_roman(n):
 def _draw_centered_mixed(canvas, y, segments):
     """Draw `segments` (list of (text, font, size, color)) as one centered
     line, each segment in its own font - used for the two-tone header strap."""
+    # Unlike a Paragraph, drawing directly on the canvas (as this and
+    # on_page() below do) means we're fully responsible for positioning:
+    # reportlab won't wrap or center anything for us. To center a line
+    # made of several differently-styled runs, we first have to measure
+    # the total width of all of them combined, then start drawing from
+    # (page_width - total_width) / 2 so the whole line is centered as one
+    # unit, advancing `x` by each segment's own width as we go.
     total_width = sum(canvas.stringWidth(text, font, size) for text, font, size, _ in segments)
     x = (canvas._pagesize[0] - total_width) / 2.0
     for text, font, size, color in segments:
@@ -327,7 +474,7 @@ def _build_story(style, styles, title_page, elements):
     flowables get consumed/positioned during doc.build() and can't be
     reused across two builds."""
     story = []
-    at_fresh_page = False
+    at_fresh_page = False  # True right after a PageBreak, before any content has landed on it
 
     if title_page:
         story.extend(_title_page_flowables(title_page, styles))
@@ -343,6 +490,24 @@ def _build_story(style, styles, title_page, elements):
     pending_lines = []         # [(kind, text), ...] for that speech
     scene_marked = False       # has the first Act/Scene heading been tagged yet?
 
+    # mark_scene_start and flush_char_block below are *nested functions*
+    # (functions defined inside another function). Because they're defined
+    # inside _build_story, they can see and use _build_story's local
+    # variables directly - `story`, `style`, `styles`, and so on - without
+    # those being passed in as arguments. This is called a "closure": each
+    # nested function "closes over" the variables from the function it was
+    # defined in. It's a common Python pattern for helpers that are only
+    # ever used in one place and need access to a handful of the enclosing
+    # function's local state.
+    #
+    # There's one wrinkle: by default, a nested function can *read* an
+    # enclosing variable but assigning to it (`scene_marked = True`) would
+    # instead create a brand new *local* variable inside the nested
+    # function, shadowing the outer one rather than changing it. The
+    # `nonlocal` keyword below tells Python "no, when I assign to this
+    # name, modify the enclosing function's variable" - without it,
+    # scene_marked would never actually update.
+
     def mark_scene_start(flowable):
         """Tag the first Act/Scene structural heading (a `section` - "#"/"##" -
         or a `scene_heading` - INT./EXT./forced ".") so pagination and the
@@ -350,6 +515,11 @@ def _build_story(style, styles, title_page, elements):
         pages before it out of the Arabic page count."""
         nonlocal scene_marked
         if not scene_marked:
+            # Setting an attribute directly on a flowable instance like
+            # this works because reportlab flowables are ordinary Python
+            # objects - you can attach arbitrary extra attributes to them
+            # just like any other object, and _ScribeDocTemplate.afterFlowable
+            # above later reads this one back with getattr().
             flowable.apt_body_start = True
             scene_marked = True
         return flowable
@@ -364,9 +534,21 @@ def _build_story(style, styles, title_page, elements):
             story.append(block)
             story.append(Spacer(1, style.speech_gap))
             pending_character = None
+            # list.clear() empties the list in place; pending_lines still
+            # refers to the *same* list object afterwards (as opposed to
+            # `pending_lines = []`, which would point the name at a new,
+            # separate list - fine here too, but .clear() is the more
+            # direct way to say "empty this list" when you don't need a
+            # fresh object).
             pending_lines.clear()
             at_fresh_page = False
 
+    # The main pass over the parsed elements: for each one, either start
+    # accumulating a character's speech (character/parenthetical/dialogue
+    # types don't immediately produce a flowable - they get buffered in
+    # pending_character/pending_lines until flush_char_block() is called),
+    # or - for every other type - flush whatever speech was pending, then
+    # build and append that element's own flowable(s).
     for el in elements:
         if el.type == "character":
             flush_char_block()
@@ -394,6 +576,10 @@ def _build_story(style, styles, title_page, elements):
             if (style.act_underline if depth == 1 else style.scene_underline):
                 text = f"<u>{text}</u>"
             para = Paragraph(text, heading_style)
+            # apt_scene isn't a reportlab attribute - it's our own marker,
+            # read back later by _ScribeDocTemplate.afterFlowable (during
+            # the probe pass) to build the header strap's "which scene is
+            # current on this page" lookup.
             para.apt_scene = el.text.upper()
             if depth == 1 and story and not at_fresh_page:
                 story.append(PageBreak())
@@ -424,6 +610,11 @@ def _build_story(style, styles, title_page, elements):
             at_fresh_page = False
         elif el.type == "preface_list_item":
             marker = el.meta.get("marker", "•")
+            # bulletText draws a hanging bullet/number to the left of the
+            # paragraph's own left margin, using the style's bulletIndent -
+            # this is reportlab's built-in support for exactly this kind of
+            # list-item layout, so we don't have to fake it with manual
+            # indentation and a literal "•" character in the text.
             para = Paragraph(render_inline(el.text), styles["preface_list"], bulletText=marker)
             story.append(para)
             at_fresh_page = False
@@ -439,11 +630,14 @@ def _build_story(style, styles, title_page, elements):
                 at_fresh_page = True
         # unknown types are silently skipped
 
-    flush_char_block()
+    flush_char_block()  # don't lose a speech that was still pending at the very end
     return story
 
 
 def build_pdf(style, title_page, elements, output_path):
+    """Top-level entry point: turn parsed Fountain (title_page + elements)
+    into a PDF at output_path, using the given Style. Called once per run
+    from cli.py."""
     styles = _styles(style)
     doc_kwargs = dict(
         pagesize=style.page_size,
@@ -458,11 +652,20 @@ def build_pdf(style, title_page, elements, output_path):
     # Pass 1: throwaway build purely to discover, per page, which page
     # dialogue starts on and which scene is "current" - see
     # _ScribeDocTemplate for why this can't be determined during the real
-    # build's onPage callback.
+    # build's onPage callback. io.BytesIO() gives reportlab an in-memory
+    # buffer to write this disposable PDF into instead of a real file on
+    # disk, since we only care about the page/scene bookkeeping this pass
+    # produces as a side effect, not the PDF bytes themselves.
     probe_doc = _ScribeDocTemplate(io.BytesIO(), **doc_kwargs)
     probe_doc.build(_build_story(style, styles, title_page, elements))
 
     dialogue_start_page = probe_doc.dialogue_start_page
+    # Build a page -> "current scene" lookup, so on_page() below can just
+    # do a dict lookup instead of re-deriving this every time it draws a
+    # page. `events` is the list of (page_number, scene_text) pairs
+    # collected during the probe pass, in the order those scenes were
+    # encountered; `ei` walks through it once, left to right, carrying
+    # `last_scene` forward onto every page number in between two events.
     scene_by_page = {}
     last_scene = ""
     events = probe_doc.scene_events
@@ -476,6 +679,13 @@ def build_pdf(style, title_page, elements, output_path):
     play_title = (" ".join(title_page.get("title", [])) or "").upper()
 
     def on_page(canvas, doc_):
+        # reportlab calls this once per page during the *real* build
+        # (passed in as onFirstPage/onLaterPages below), after that page's
+        # content has been drawn, giving us a chance to add page furniture
+        # like page numbers and the header strap directly onto the canvas.
+        # canvas.saveState()/.restoreState() bracket our drawing so any
+        # font/color changes we make don't leak into reportlab's own
+        # subsequent drawing for the page content.
         canvas.saveState()
 
         page_num_text = None
@@ -501,6 +711,11 @@ def build_pdf(style, title_page, elements, output_path):
                 if style.pagination_position == "top"
                 else style.bottom_margin / 2.0
             )
+            # drawString/drawRightString/drawCentredString all take an (x,
+            # y) *baseline* position, not a bounding box - reportlab's
+            # coordinate system has y=0 at the *bottom* of the page (the
+            # opposite of most screen/GUI coordinate systems), which is why
+            # "near the top" means a *large* y value here.
             if style.pagination_alignment == "left":
                 canvas.drawString(style.left_margin, y, page_num_text)
             elif style.pagination_alignment == "right":
@@ -520,6 +735,11 @@ def build_pdf(style, title_page, elements, output_path):
 
         canvas.restoreState()
 
-    # Pass 2: the real build, now with header/pagination fully known upfront.
+    # Pass 2: the real build, now with header/pagination fully known
+    # upfront. A plain SimpleDocTemplate is used this time (not our
+    # _ScribeDocTemplate subclass) since we no longer need to collect
+    # anything during this pass - on_page is registered for both the first
+    # page and every later page, so it runs once per page as the PDF is
+    # produced.
     doc = SimpleDocTemplate(output_path, **doc_kwargs)
     doc.build(_build_story(style, styles, title_page, elements), onFirstPage=on_page, onLaterPages=on_page)
