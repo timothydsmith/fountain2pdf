@@ -365,6 +365,17 @@ def _extract_markdown_breakdowns(lines, start_idx):
     for i in range(start_idx, end):
         stripped = lines[i].strip()
         if not stripped:
+            # A blank line inside an active section is a paragraph break
+            # the writer intended (e.g. separating a cast list from a note
+            # about doubled roles) - record it as a single "" marker so the
+            # renderer can turn it into a visible gap later (see engine.py's
+            # _preliminary_flowables). `extracted.get(active_key)` guards
+            # against marking a blank line before any real content has been
+            # seen yet, and the `!= ""` check collapses several blank
+            # source lines in a row into just one marker, rather than
+            # stacking up extra gaps for each one.
+            if active_key and extracted.get(active_key) and extracted[active_key][-1] != "":
+                extracted[active_key].append("")
             continue
         if PAGE_BREAK_RE.match(stripped):
             # A page break always ends whatever section was active, so a

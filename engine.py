@@ -40,10 +40,12 @@ see _build_story() below, which is the heart of the module.
 """
 
 import io
+import re
 
 from reportlab.lib.colors import Color
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.lib.styles import ParagraphStyle
+from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.platypus import (
     SimpleDocTemplate,
     Paragraph,
@@ -253,10 +255,72 @@ def _get_first(title_page, keys):
     return None
 
 
-def _preliminary_flowables(title_page, styles):
+# A "Name<some gap>Description" line, e.g. "ALEX              41 years old" -
+# writers commonly line these up with runs of spaces so they read as a
+# column when viewed in a fixed-width editor. `\s{2,}` (two or more
+# whitespace characters) is the separator: a *single* space is treated as
+# just part of an ordinary sentence (so "KARIM and DR ABEL are played by
+# the same actor." is correctly left alone), while two-or-more spaces is
+# read as "the writer meant this as a column break". `(\S.*?)` (non-greedy)
+# for the name lets it contain single spaces itself (e.g. "DR ABEL",
+# "PROFESSOR DE VOS") while still stopping at the first big gap.
+NAME_DESCRIPTION_RE = re.compile(r"^(\S.*?)\s{2,}(\S.*)$")
+
+# Extra horizontal gap (points) between the name column and the
+# description column in a preliminary section - the same idea as
+# Style.dialogue_gutter, just not style-configurable since this is a
+# best-effort fallback for source formatting, not a house-style rule.
+_NAME_DESCRIPTION_GUTTER = 12
+
+
+def _split_name_description(line):
+    """If `line` looks like "Name<big gap>Description", return (name,
+    description). Otherwise return None, meaning it should just be
+    rendered as an ordinary paragraph."""
+    m = NAME_DESCRIPTION_RE.match(line)
+    return (m.group(1), m.group(2)) if m else None
+
+
+def _name_description_row(name, description, name_col_width, available_width, styles):
+    """One "Name   description" entry as a two-column, borderless table -
+    the same technique _character_block_flowable uses for dialogue: a
+    fixed-width left column and reportlab-driven wrapping in the right
+    column give every row's description the same hanging indent, however
+    long its name is, without depending on literal spaces in the source
+    (which reportlab's Paragraph would collapse to one anyway - Paragraph
+    text is interpreted a bit like HTML, where runs of whitespace aren't
+    significant)."""
+    name_para = Paragraph(render_inline(name), styles["prelim_body"])
+    desc_para = Paragraph(render_inline(description), styles["prelim_body"])
+    table = Table(
+        [[name_para, desc_para]],
+        colWidths=[name_col_width, available_width - name_col_width],
+        hAlign="LEFT",
+    )
+    table.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                # A bit of bottom padding on every row, so consecutive rows
+                # don't sit flush against each other - Table doesn't pick
+                # up a Paragraph's own spaceAfter the way stacked
+                # Paragraphs flowing directly in the story would.
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ("LEFTPADDING", (1, 0), (1, -1), _NAME_DESCRIPTION_GUTTER),
+            ]
+        )
+    )
+    return KeepTogether([table])
+
+
+def _preliminary_flowables(title_page, styles, style):
     """Characters / Setting & Time / Scene Breakdown pages, built from
     whatever matching title-page keys the writer supplied. Any section with
     no matching key is simply skipped."""
+    available_width = style.page_size[0] - style.left_margin - style.right_margin
     pages = []
     for heading, keys in PRELIMINARY_SECTIONS:
         if heading == "SETTING & TIME":
@@ -275,9 +339,40 @@ def _preliminary_flowables(title_page, styles):
             lines = _get_first(title_page, keys)
         if not lines:
             continue
+
+        # Work out which lines in *this* section look like "Name
+        # Description" entries, so a plain sentence elsewhere in the same
+        # section (e.g. a note about doubling roles) isn't forced into a
+        # column it was never meant to be part of.
+        splits = [_split_name_description(line) for line in lines]
+        names = [name for name, _ in (s for s in splits if s)]
+        name_col_width = 0
+        if names:
+            # Size the shared name column to fit the *longest* name in
+            # this section, so every row's description lines up in the
+            # same place regardless of how short or long its own name is -
+            # measured in the actual font/size these names will be drawn
+            # in, rather than guessed from character count.
+            name_col_width = (
+                max(stringWidth(name, style.font_regular, style.body_size) for name in names)
+                + _NAME_DESCRIPTION_GUTTER
+            )
+
         flow = [Paragraph(heading, styles["prelim_heading"])]
-        for line in lines:
-            flow.append(Paragraph(render_inline(line), styles["prelim_body"]))
+        for line, split in zip(lines, splits):
+            if line == "":
+                # A blank-line marker from _extract_markdown_breakdowns -
+                # a paragraph break in the source, rendered as extra
+                # vertical space rather than an empty line of text (an
+                # empty Paragraph would just collapse to ~nothing).
+                flow.append(Spacer(1, style.leading))
+            elif split:
+                name, description = split
+                flow.append(
+                    _name_description_row(name, description, name_col_width, available_width, styles)
+                )
+            else:
+                flow.append(Paragraph(render_inline(line), styles["prelim_body"]))
         # Each section becomes its own list of flowables here (`pages` is a
         # list of lists) rather than one flat list, because _build_story()
         # needs to insert a PageBreak() between sections - it can't do that
@@ -481,7 +576,7 @@ def _build_story(style, styles, title_page, elements):
         story.append(PageBreak())
         at_fresh_page = True
 
-    for page_flow in _preliminary_flowables(title_page, styles):
+    for page_flow in _preliminary_flowables(title_page, styles, style):
         story.extend(page_flow)
         story.append(PageBreak())
         at_fresh_page = True
