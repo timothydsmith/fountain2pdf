@@ -132,8 +132,11 @@ def _styles(style):
                 style.font_italic if style.act_italic else
                 style.font_regular
             ),
-            fontSize=style.act_size, leading=style.leading, alignment=_ALIGN_MAP[style.act_alignment],
-            spaceBefore=6, spaceAfter=18,
+            fontSize=style.act_size,
+            leading=style.leading,
+            alignment=_ALIGN_MAP[style.act_alignment],
+            spaceBefore=6,
+            spaceAfter=18,
         ),
         "scene_heading": ParagraphStyle(
             "scene_heading",
@@ -144,7 +147,10 @@ def _styles(style):
                 style.font_regular
             ),
             fontSize=style.scene_size,
-            leading=style.leading, alignment=_ALIGN_MAP[style.scene_alignment], spaceBefore=6, spaceAfter=18,
+            leading=style.leading,
+            alignment=_ALIGN_MAP[style.scene_alignment],
+            spaceBefore=6,
+            spaceAfter=18,
         ),
         "character": ParagraphStyle(
             "character",
@@ -450,8 +456,23 @@ def _character_block_parts(name, lines, style, styles):
 
     first_kind, first_text = lines[0]
     first_rendered = render_line(first_kind, first_text)
+    # `consumed` is how many of `lines` end up on this shared first line -
+    # normally just the one. But a parenthetical with no dialogue before
+    # it reads as part of the same beat as the dialogue that follows it
+    # ("(dialling) Be calm. Be direct."), so if that's what we've got,
+    # pull the next line in too rather than leaving the parenthetical
+    # stranded alone on the name's row with the dialogue starting fresh
+    # underneath. Only the *leading* parenthetical gets this treatment -
+    # one appearing later, mid-speech, still gets its own line below (see
+    # the `lines[consumed:]` loop), since by then it's interrupting
+    # dialogue that's already under way rather than introducing it.
+    consumed = 1
     if first_kind == "parenthetical":
         first_rendered = f'<font color="{tint_hex}">{first_rendered}</font>'
+        if len(lines) > 1 and lines[1][0] != "parenthetical":
+            second_kind, second_text = lines[1]
+            first_rendered = f"{first_rendered} {render_line(second_kind, second_text)}"
+            consumed = 2
     first_para = Paragraph(first_rendered, styles["dialogue"])
 
     available_width = style.page_size[0] - style.left_margin - style.right_margin
@@ -489,7 +510,7 @@ def _character_block_parts(name, lines, style, styles):
     )
 
     parts = [table]
-    for kind, text in lines[1:]:
+    for kind, text in lines[consumed:]:
         rendered = render_line(kind, text)
         style_key = "parenthetical_continued" if kind == "parenthetical" else "dialogue_continued"
         parts.append(Paragraph(rendered, styles[style_key]))
