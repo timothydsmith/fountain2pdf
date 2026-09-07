@@ -2,6 +2,18 @@
 
 All notable changes to fountain2pdf are documented here.
 
+## [Unreleased]
+
+### Fixed
+
+- Removed a strip of blank space that could appear at the top of a page
+  (most visibly with the `apt` style). The gap that separates two
+  speeches was a standalone `Spacer`, which reportlab honours even at the
+  top of a frame; when a speech ended close to the bottom margin the
+  spacer was pushed onto the next page and printed above its first line.
+  Inter-speech gaps and preliminary-section blank lines now collapse to
+  nothing when they land at the top of a page.
+
 ## [0.1] - 2026-08-15
 
 Initial release. `fountain2pdf` converts a [Fountain](https://fountain.io)-formatted

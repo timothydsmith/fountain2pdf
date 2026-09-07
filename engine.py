@@ -418,7 +418,7 @@ def _preliminary_flowables(title_page, styles, style):
                 # a paragraph break in the source, rendered as extra
                 # vertical space rather than an empty line of text (an
                 # empty Paragraph would just collapse to ~nothing).
-                flow.append(Spacer(1, style.leading))
+                flow.append(_CollapsingSpacer(1, style.leading))
             elif split:
                 name, description = split
                 flow.append(
@@ -803,6 +803,28 @@ def _draw_centered_mixed(canvas, y, segments):
         x += canvas.stringWidth(text, font, size)
 
 
+class _CollapsingSpacer(Spacer):
+    """A vertical gap that shrinks to nothing when it would land at the very
+    top of a page, and behaves exactly like Spacer(width, height) anywhere
+    else.
+
+    reportlab suppresses a Paragraph's own spaceBefore at the top of a
+    frame, but a standalone Spacer is always honoured - so a plain
+    Spacer that gets pushed past a page boundary (because the flowable
+    before it ended within `height` points of the bottom margin) prints
+    as a blank strip above the first line of text on the next page. Any
+    inter-element gap that is only meant to separate two items on the
+    same page - the gap after a speech, a blank-line marker inside a
+    preliminary section - should use this instead.
+    """
+
+    def wrap(self, availWidth, availHeight):
+        frame = getattr(self, "_frame", None)
+        if frame is not None and getattr(frame, "_atTop", False):
+            return availWidth, 0
+        return Spacer.wrap(self, availWidth, availHeight)
+
+
 def _build_story(style, styles, title_page, elements):
     """Build the flowable list. Called twice by build_pdf (once for a
     throwaway metadata-collection pass, once for the real build), since
@@ -888,7 +910,7 @@ def _build_story(style, styles, title_page, elements):
                 # them, via each Paragraph's own built-in split() - without
                 # any help from us.
                 story.extend(parts)
-            story.append(Spacer(1, style.speech_gap))
+            story.append(_CollapsingSpacer(1, style.speech_gap))
             pending_character = None
             # list.clear() empties the list in place; pending_lines still
             # refers to the *same* list object afterwards (as opposed to
