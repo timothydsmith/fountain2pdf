@@ -6,8 +6,10 @@ script into a formatted PDF, using a swappable house-style engine.
 ## Requirements
 
 ```
-pip install reportlab
+pip install -r requirements.txt
 ```
+
+The only direct dependency is [reportlab](https://pypi.org/project/reportlab/).
 
 ## Usage
 

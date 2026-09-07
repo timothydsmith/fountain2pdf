@@ -1,0 +1,3 @@
+# fountain2pdf's only direct dependency. Pillow and charset-normalizer get
+# pulled in automatically as reportlab's own dependencies.
+reportlab>=4.0
