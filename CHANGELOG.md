@@ -2,7 +2,7 @@
 
 All notable changes to fountain2pdf are documented here.
 
-## [Unreleased]
+## [0.1.2] - 2026-09-07
 
 ### Fixed
 
