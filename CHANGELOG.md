@@ -2,6 +2,17 @@
 
 All notable changes to fountain2pdf are documented here.
 
+## [Unreleased]
+
+### Fixed
+
+- The gap between a speech and a following stage direction (or scene
+  heading) was too large: `speech_gap` was emitted as its own spacer and
+  the next element then added its own space on top. The inter-speech gap
+  is now carried as the speech's `spaceAfter`, so reportlab collapses it
+  against the next element's leading space (taking the larger of the two)
+  instead of stacking them.
+
 ## [0.1.1] - 2026-09-07
 
 ### Fixed

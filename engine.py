@@ -599,12 +599,22 @@ class _SpeechFlowable(Flowable):
     real logic instead.
     """
 
-    def __init__(self, name, parts, style, styles, min_lead=1):
+    def __init__(self, name, parts, style, styles, min_lead=1, space_after=0):
         Flowable.__init__(self)
         self.name = name
         self.parts = parts
         self.style = style
         self.styles = styles
+        # The gap that separates this speech from whatever follows it.
+        # Carried as spaceAfter (the attribute reportlab's frame looks
+        # for) rather than as a trailing Spacer flowable so that (a) it
+        # collapses against the next element's own spaceBefore instead of
+        # stacking on top of it - reportlab takes the larger of the two,
+        # so a stage direction after a speech no longer gets speech_gap +
+        # its own spaceBefore - and (b) reportlab discards it at a page
+        # break, so it can never print as a blank strip at the top of the
+        # next page.
+        self.spaceAfter = space_after
         # How many of `parts` must always be kept together as one
         # unsplittable leading chunk - see split() for why this exists.
         # Clamped to len(parts) so a very short speech (e.g. just a name,
@@ -697,9 +707,15 @@ class _SpeechFlowable(Flowable):
         # split() will simply be called on it again there - the same
         # logic handles a speech that needs three, four, or more pages
         # without this class needing to know that in advance.
+        # The trailing gap belongs only on the piece that actually ends
+        # the speech: the first piece is followed by the "(MORE)" cue and
+        # a page break, not by the next element.
         return [
             _SpeechFlowable(self.name, this_page, self.style, self.styles, self.min_lead),
-            _SpeechFlowable(self.name, next_parts, self.style, self.styles, next_min_lead),
+            _SpeechFlowable(
+                self.name, next_parts, self.style, self.styles, next_min_lead,
+                space_after=self.spaceAfter,
+            ),
         ]
 
     def draw(self):
@@ -812,10 +828,10 @@ class _CollapsingSpacer(Spacer):
     frame, but a standalone Spacer is always honoured - so a plain
     Spacer that gets pushed past a page boundary (because the flowable
     before it ended within `height` points of the bottom margin) prints
-    as a blank strip above the first line of text on the next page. Any
-    inter-element gap that is only meant to separate two items on the
-    same page - the gap after a speech, a blank-line marker inside a
-    preliminary section - should use this instead.
+    as a blank strip above the first line of text on the next page. Used
+    for the blank-line marker inside a preliminary section; the gap
+    between speeches is handled differently (as the speech's spaceAfter -
+    see flush_char_block).
     """
 
     def wrap(self, availWidth, availHeight):
@@ -897,20 +913,32 @@ def _build_story(style, styles, title_page, elements):
             else:
                 parts = _character_block_parts(pending_character, pending_lines, style, styles)
                 min_lead = 1
+            # The gap to the next element travels as the speech's own
+            # spaceAfter rather than a trailing Spacer flowable: reportlab
+            # then collapses it against the next element's spaceBefore
+            # (taking the larger of the two, so a following stage
+            # direction no longer gets speech_gap *plus* its own
+            # spaceBefore) and drops it entirely at a page break (so it
+            # can't surface as blank space at the top of the next page).
             if style.more_continued:
                 # Wrapped in the one custom flowable, so a page break
                 # partway through gets a "(MORE)"/"(CONT'D)" cue - see
                 # _SpeechFlowable.
-                story.append(_SpeechFlowable(pending_character, parts, style, styles, min_lead))
+                story.append(
+                    _SpeechFlowable(
+                        pending_character, parts, style, styles, min_lead,
+                        space_after=style.speech_gap,
+                    )
+                )
             else:
                 # No wrapper at all: `parts` are already independent
                 # flowables (a table, then a Paragraph per further line),
                 # so reportlab's normal story-flowing logic already breaks
                 # between them - and even mid-paragraph within one of
                 # them, via each Paragraph's own built-in split() - without
-                # any help from us.
+                # any help from us. The gap rides on the last part.
+                parts[-1].spaceAfter = getattr(parts[-1], "spaceAfter", 0) + style.speech_gap
                 story.extend(parts)
-            story.append(_CollapsingSpacer(1, style.speech_gap))
             pending_character = None
             # list.clear() empties the list in place; pending_lines still
             # refers to the *same* list object afterwards (as opposed to
