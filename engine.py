@@ -959,6 +959,8 @@ def _build_story(style, styles, title_page, elements):
         if el.type == "character":
             flush_char_block()
             pending_character = el.text.upper()
+            if el.meta.get("dual") and style.dual_dialogue_label:
+                pending_character = f"{pending_character} {style.dual_dialogue_label}"
             continue
 
         if el.type == "parenthetical":

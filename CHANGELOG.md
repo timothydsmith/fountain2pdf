@@ -2,6 +2,17 @@
 
 All notable changes to fountain2pdf are documented here.
 
+## [Unreleased]
+
+### Added
+
+- `apt` style: dual dialogue (`BEN ^` directly after another speech) now
+  labels both cue names with "(together)", e.g. `ALEX (together)` /
+  `BEN (together)`. Side-by-side layout is still not supported. Driven by
+  a new `Style.dual_dialogue_label` field (empty by default, so other
+  styles are unchanged); the parser tags both cues of a pair with
+  `meta["dual"]` and ignores a `^` that has no speech right before it.
+
 ## [0.1.2] - 2026-09-07
 
 ### Fixed

@@ -167,7 +167,10 @@ lines preserved as paragraph breaks.
 ## Known limitations
 
 - **Dual dialogue** (`^`) is not laid out side-by-side - the marker is
-  dropped and the dialogue renders as a normal single column.
+  dropped and the dialogue renders as a normal single column. The `apt`
+  style additionally appends "(together)" to both character names of the
+  pair (e.g. `ALEX (together)`); a stray `^` with no speech immediately
+  before it is simply ignored.
 - A break in a speech (for pagination, or for a "(MORE)"/continued cue
   where the style uses one) can only fall *between* two dialogue or
   parenthetical lines, never in the middle of one - so a single line so

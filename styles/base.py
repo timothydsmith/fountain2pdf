@@ -179,3 +179,9 @@ class Style:
     # its own, different rule for a leading parenthetical (see
     # engine._character_block_parts).
     character_short_parenthetical_inline: bool = False
+
+    # Dual dialogue ("BEN ^" marking a speech as simultaneous with the one
+    # before it): side-by-side layout isn't supported, so a style can
+    # instead append this label to *both* cue names of the pair, e.g.
+    # "ALEX (together)". Empty means no label (the marker is just dropped).
+    dual_dialogue_label: str = ""

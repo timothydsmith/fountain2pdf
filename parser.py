@@ -3,8 +3,9 @@ fountain2pdf.parser
 --------------------
 A pragmatic parser for Fountain (https://fountain.io) markup.
 
-It does not attempt full spec coverage (dual dialogue and indices are not
-supported), but it covers the elements that show up in the overwhelming
+It does not attempt full spec coverage (indices are not supported, and dual
+dialogue is only tagged - the two cues get meta["dual"] - not laid out
+side-by-side), but it covers the elements that show up in the overwhelming
 majority of real scripts:
 
   - Title page (Key: value block at the top of the file)
@@ -572,10 +573,27 @@ def parse_fountain(text):
         if candidate and not candidate.startswith("(") and (
             forced_char or (is_all_caps_name(name_for_caps_check) and next_has_content)
         ):
-            # strip a trailing "^" (dual dialogue marker) - not fully supported,
-            # but we drop the marker rather than print it.
-            name = candidate[:-1].strip() if candidate.endswith("^") else candidate
-            elements.append(Element("character", name))
+            # A trailing "^" marks this cue as the second half of a dual
+            # dialogue pair. The marker itself is never printed; instead
+            # both cues of the pair are tagged meta["dual"] so a style that
+            # wants to (see Style.dual_dialogue_label) can label them -
+            # side-by-side layout isn't supported.
+            has_marker = candidate.endswith("^")
+            name = candidate[:-1].strip() if has_marker else candidate
+            is_dual = False
+            if has_marker:
+                # Walk back over the previous speech's dialogue and
+                # parentheticals to find its cue, and tag it too - but only
+                # if that speech immediately precedes this one. Anything
+                # else in between (a stage direction, a scene heading)
+                # means there's no pair, so a stray "^" is just dropped.
+                back = len(elements) - 1
+                while back >= 0 and elements[back].type in ("dialogue", "parenthetical"):
+                    back -= 1
+                if back >= 0 and elements[back].type == "character":
+                    elements[back].meta["dual"] = True
+                    is_dual = True
+            elements.append(Element("character", name, {"dual": True} if is_dual else None))
             idx += 1
             # Everything up to the next blank line belongs to this
             # character's speech: parentheticals like "(beat)" become their
